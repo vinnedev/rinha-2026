@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/bytedance/sonic"
 	"github.com/vinnedev/rinha-2026/internal/domain"
 	"github.com/vinnedev/rinha-2026/internal/fraud"
 )
@@ -68,7 +67,7 @@ func (h *fraudHandler) scoreRaw(w http.ResponseWriter, r *http.Request) {
 	p := payloadPool.Get().(*domain.FraudPayload)
 	*p = domain.FraudPayload{}
 
-	if err := sonic.Unmarshal(body, p); err != nil {
+	if err := fraud.ParsePayload(body, p); err != nil {
 		payloadPool.Put(p)
 		*bufPtr = body[:0]
 		bufPool.Put(bufPtr)
