@@ -1,0 +1,7 @@
+{
+    "participants": ["Vinicius Abreu"],
+    "social": ["https://github.com/vinnedev"],
+    "source-code-repo": "https://github.com/vinnedev/rinha-2026",
+    "stack": ["go", "python", "scikit-learn", "fastjson", "x86-avx2", "nginx-free"],
+    "open_to_work": true
+}
