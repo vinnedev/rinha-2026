@@ -12,21 +12,24 @@ The implementation combines:
 - A **distilled Random Forest** that handles the easy decisions in tens of
   nanoseconds.
 - A **hybrid** path: when the forest is uncertain, fall back to the oracle.
-- A net/http server with **Unix-socket** transport to the LB and
-  **pre-computed JSON responses** to remove allocations from the hot path.
+- A custom **Go LB** that pipes bytes from TCP to Unix-socket upstreams
+  with Linux `splice(2)` — no HTTP parsing on the load balancer at all.
+- **AVX2-accelerated** VP-Tree distance loop (Go assembly).
+- **fastjson** path parser tied to the schema (no reflection).
+- **Pre-computed JSON responses** to remove allocations from the hot path.
 
 ```mermaid
 flowchart LR
     client((k6 / clients))
-    nginx[nginx LB<br/>:9999<br/>round-robin]
+    lb[Go LB<br/>:9999<br/>round-robin<br/>TCP-splice]
     api1[api1<br/>net/http]
     api2[api2<br/>net/http]
     rf[(Random Forest<br/>30 trees,<br/>4.5 MB)]
     vp[(VP-Tree index<br/>3M vectors,<br/>106 MB mmap)]
 
-    client -->|HTTP /fraud-score| nginx
-    nginx -. unix socket .-> api1
-    nginx -. unix socket .-> api2
+    client -->|HTTP /fraud-score| lb
+    lb -. unix socket .-> api1
+    lb -. unix socket .-> api2
     api1 --> rf
     api1 --> vp
     api2 --> rf
@@ -36,17 +39,22 @@ flowchart LR
 ## Result
 
 Local Docker Compose, 900 rps ramp, 120 s, k6 official dataset
-(54,100 entries):
+(54,100 entries). Eight consecutive runs with the full stack
+(Go LB + AVX2 + fastjson + hybrid RF/VP-Tree):
 
-| Metric | Value |
-| --- | --- |
-| p99 | **1.05 ms** |
-| score | **5,979** |
-| false positives | **0** |
-| false negatives | **0** |
-| HTTP errors | **0** |
-| failure rate | **0%** |
-| resources | 2 × API: 0.42 CPU / 160 MB · LB: 0.16 CPU / 30 MB · total 1.0 CPU / 350 MB |
+| run | p99 | score | FP | FN | HTTP errors |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 1.14 ms | 5,944 | 0 | 0 | 0 |
+| 2 | 1.08 ms | 5,966 | 0 | 0 | 0 |
+| 3 | 1.10 ms | 5,958 | 0 | 0 | 0 |
+| 4 | 1.12 ms | 5,952 | 0 | 0 | 0 |
+| 5 | 1.09 ms | 5,961 | 0 | 0 | 0 |
+| 6 | 1.13 ms | 5,948 | 0 | 0 | 0 |
+| 7 | **1.04 ms** | **5,981** | 0 | 0 | 0 |
+| 8 | 1.05 ms | 5,978 | 0 | 0 | 0 |
+
+Resources: 2 × API: 0.42 CPU / 160 MB · LB: 0.16 CPU / 30 MB ·
+total 1.0 CPU / 350 MB.
 
 Detection is exact (the hybrid always reaches the same verdict the test oracle
 expects). Latency is dominated by HTTP plumbing — k-NN itself runs in tens of
@@ -57,10 +65,10 @@ microseconds per query when the RF defers.
 ```
 cmd/
   api/          entrypoint
+  lb/           TCP-splice load balancer (replaces nginx)
   preprocess/   builds the packed VP-Tree binary from references.json.gz
   distill/      builds distilled k-NN labels for training (parallel Go)
 config/         env wiring
-deploy/         nginx config
 docs/           extended docs (architecture, performance, training)
 internal/
   domain/       core entities and constants (14 dims, mcc_risk, thresholds)
@@ -117,11 +125,17 @@ those the oracle is exact, so the **hybrid matches the oracle verdict on
 ### HTTP path
 - Pure `net/http` with the Go 1.22 method-aware `ServeMux` (no framework on the
   hot path).
-- LB → API over Unix sockets (`SOCKET_PATH` env), shared by a tmpfs volume.
+- Custom Go LB (`cmd/lb`) accepts TCP on `:9999` and proxies bytes to
+  per-API Unix sockets via `io.Copy` — the Linux kernel `splice(2)`
+  path keeps payload bytes out of userspace, so the LB never parses or
+  rewrites HTTP.
 - 6 pre-built JSON bodies (one per `k/5` oracle score) chosen by a tiny switch
-  — no `json.Marshal`, no float formatting, no allocation.
+  — no `json.Marshal`, no float formatting, no allocation on success.
+- `fastjson.ParserPool` for the inbound payload — path-based access tied
+  to the schema, ~3× cheaper than `sonic.Unmarshal` and allocation-light.
 - `sync.Pool` for the request struct.
-- `sonic.Unmarshal` for the inbound payload.
+- AVX2 inner loop for the 14-dim VP-Tree distance — one `VPMADDWD`
+  plus a small horizontal reduction.
 - mmap-backed indexes, touched once at startup to warm the page cache.
 
 ## Running locally
