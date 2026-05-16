@@ -1,0 +1,12 @@
+/resources/vectors.bin
+/resources/fraud_dt.bin
+/resources/labels_distilled.bin
+/test/results.json
+/model/.venv/
+/model/__pycache__/
+/model/.ipynb_checkpoints/
+/model/fraud_dt.joblib
+/model/fraud_dt_*.joblib
+/model/metrics*.json
+*.log
+.DS_Store
