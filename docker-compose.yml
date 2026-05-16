@@ -19,11 +19,7 @@ x-api-env: &api-env
   GOMEMLIMIT: "30MiB"
 
 x-api: &api-defaults
-  build:
-    context: .
-    dockerfile: Dockerfile
-    target: api
-  image: rinha-2026-api:latest
+  image: ghcr.io/vinnedev/rinha-2026-api:latest
   platform: linux/amd64
   networks:
     - rinha
@@ -60,11 +56,7 @@ services:
           memory: "160MB"
 
   lb:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: lb
-    image: rinha-2026-lb:latest
+    image: ghcr.io/vinnedev/rinha-2026-lb:latest
     platform: linux/amd64
     container_name: rinha-lb
     depends_on:
