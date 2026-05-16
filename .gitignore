@@ -1,6 +1,7 @@
 /resources/vectors.bin
 /resources/fraud_dt.bin
 /resources/labels_distilled.bin
+/resources/references.json.gz
 /test/results.json
 /model/.venv/
 /model/__pycache__/
