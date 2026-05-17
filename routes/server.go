@@ -3,26 +3,32 @@ package routes
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"time"
 
+	"github.com/valyala/fasthttp"
+
 	"github.com/vinnedev/rinha-2026/config"
-	"github.com/vinnedev/rinha-2026/pkg/logger"
 )
 
-func NewServer(ctx context.Context, handler http.Handler) *http.Server {
-	return &http.Server{
-		Handler:           handler,
-		ReadTimeout:       config.READ_TIMEOUT,
-		ReadHeaderTimeout: config.READ_HEADER_TIMEOUT,
-		WriteTimeout:      config.WRITE_TIMEOUT,
-		IdleTimeout:       config.IDLE_TIMEOUT,
-		MaxHeaderBytes:    config.MAX_HEADER_BYTES,
-		BaseContext:       func(_ net.Listener) context.Context { return ctx },
-		ErrorLog:          slog.NewLogLogger(logger.L().Handler(), slog.LevelError),
+// NewServer wires a fasthttp.Server with timeouts taken from env. fasthttp
+// avoids the per-request allocations net/http does (no header maps,
+// no request struct allocation, body lives in the connection buffer),
+// which keeps the API throughput up on the slow Mac Mini test machine.
+func NewServer(handler fasthttp.RequestHandler) *fasthttp.Server {
+	return &fasthttp.Server{
+		Handler:                       handler,
+		ReadTimeout:                   config.READ_TIMEOUT,
+		WriteTimeout:                  config.WRITE_TIMEOUT,
+		IdleTimeout:                   config.IDLE_TIMEOUT,
+		MaxRequestBodySize:            config.MAX_HEADER_BYTES * 4,
+		DisableHeaderNamesNormalizing: true,
+		NoDefaultServerHeader:         true,
+		NoDefaultContentType:          true,
+		NoDefaultDate:                 true,
+		TCPKeepalive:                  true,
+		ReduceMemoryUsage:             false,
 	}
 }
 
@@ -51,15 +57,17 @@ func ListenAddr() string {
 	return net.JoinHostPort(config.HOST, config.PORT)
 }
 
-func Shutdown(srv *http.Server, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	err := srv.Shutdown(ctx)
-	if err == nil {
-		return nil
+func Shutdown(srv *fasthttp.Server, timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() { done <- srv.Shutdown() }()
+	select {
+	case err := <-done:
+		if err == nil || errors.Is(err, fasthttp.ErrConnectionClosed) {
+			return nil
+		}
+		return err
+	case <-time.After(timeout):
+		_ = srv.Shutdown()
+		return errors.New("shutdown timeout")
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return srv.Close()
-	}
-	return err
 }

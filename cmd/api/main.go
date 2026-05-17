@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
+	"net"
 	"os/signal"
 	"runtime"
 	"sync"
@@ -57,10 +57,10 @@ func main() {
 		slog.Int("tree_count", tr.TreeCount()),
 	)
 
-	srv := routes.NewServer(ctx, routes.New(svc))
+	srv := routes.NewServer(routes.New(svc))
 	addr := routes.ListenAddr()
 
-	listener, err := routes.NewListener(ctx, srv.Addr)
+	listener, err := routes.NewListener(ctx, net.JoinHostPort(config.HOST, config.PORT))
 	if err != nil {
 		log.Error("listener_failed", slog.String("addr", addr), slog.Any("error", err))
 		return
@@ -70,7 +70,7 @@ func main() {
 	go func() {
 		log.Info("server_starting", slog.String("addr", addr))
 		routes.MarkReady()
-		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(listener); err != nil {
 			serverErr <- err
 		}
 	}()
@@ -79,7 +79,9 @@ func main() {
 	case <-ctx.Done():
 		log.Info("signal_received")
 	case err := <-serverErr:
-		log.Error("server_failed", slog.Any("error", err))
+		if !errors.Is(err, net.ErrClosed) {
+			log.Error("server_failed", slog.Any("error", err))
+		}
 	}
 
 	routes.MarkNotReady()
@@ -91,7 +93,7 @@ func main() {
 }
 
 // loadResources loads the tree and (if hybrid is enabled) the VP-Tree dataset
-// concurrently — the dataset is the heavy one (~83MB mmap + page-cache warm),
+// concurrently — the dataset is the heavy one (~106MB mmap + page-cache warm),
 // so doing it in parallel with tree load + page-touch overlaps both.
 func loadResources(log *slog.Logger) (*tree.Tree, *dataset.Index, error) {
 	var (

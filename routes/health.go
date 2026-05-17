@@ -1,8 +1,9 @@
 package routes
 
 import (
-	"net/http"
 	"sync/atomic"
+
+	"github.com/valyala/fasthttp"
 )
 
 var ready atomic.Bool
@@ -16,17 +17,19 @@ var (
 func MarkReady()    { ready.Store(true) }
 func MarkNotReady() { ready.Store(false) }
 
-func liveness(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, aliveJSON)
+func liveness(ctx *fasthttp.RequestCtx) {
+	ctx.SetContentType(contentTypeApplJSON)
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetBody(aliveJSON)
 }
 
-func readiness(w http.ResponseWriter, _ *http.Request) {
+func readiness(ctx *fasthttp.RequestCtx) {
+	ctx.SetContentType(contentTypeApplJSON)
 	if !ready.Load() {
-		h := w.Header()
-		h["Content-Type"] = hdrContentType
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write(notReady)
+		ctx.SetStatusCode(fasthttp.StatusServiceUnavailable)
+		ctx.SetBody(notReady)
 		return
 	}
-	writeJSON(w, readyJSON)
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetBody(readyJSON)
 }

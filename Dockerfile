@@ -5,8 +5,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api && \
-    go build -trimpath -ldflags="-s -w" -o /out/preprocess ./cmd/preprocess && \
-    go build -trimpath -ldflags="-s -w" -o /out/lb ./cmd/lb
+    go build -trimpath -ldflags="-s -w" -o /out/preprocess ./cmd/preprocess
 
 FROM build AS prep
 ARG REFS_URL=https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/references.json.gz
@@ -25,7 +24,7 @@ RUN mkdir -p /work && \
       exit 1; \
     fi
 
-FROM gcr.io/distroless/static-debian12:nonroot AS api
+FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/api /api
 COPY --from=prep --chown=nonroot:nonroot /work/vectors.bin /data/vectors.bin
 COPY --from=prep --chown=nonroot:nonroot /work/fraud_dt.bin /data/fraud_dt.bin
@@ -34,9 +33,3 @@ EXPOSE 8080
 ENV DATASET_PATH=/data/vectors.bin
 ENV TREE_PATH=/data/fraud_dt.bin
 ENTRYPOINT ["/api"]
-
-FROM gcr.io/distroless/static-debian12:nonroot AS lb
-COPY --from=build /out/lb /lb
-USER nonroot:nonroot
-EXPOSE 9999
-ENTRYPOINT ["/lb"]
