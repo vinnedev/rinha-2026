@@ -69,8 +69,8 @@ func main() {
 					q[j] = idx.Vectors[base+j]
 				}
 				fc := search.KNNDistill(idx, q)
+				labels[i] = byte(fc)
 				if fc >= majorityThr {
-					labels[i] = 1
 					fraudCnt.Add(1)
 				}
 				if d := done.Add(1); d%200000 == 0 {

@@ -1,4 +1,5 @@
-"""Export sklearn DT or RandomForest into a Go-readable packed binary.
+"""Export sklearn DT, RandomForestClassifier or RandomForestRegressor into a
+Go-readable packed binary that internal/tree/tree.go can mmap and walk.
 
 DT layout (V1):
     Header (12 bytes):
@@ -21,9 +22,16 @@ RF layout (V2):
       total_nodes uint32
     Then n_trees × tree_header (4 bytes):
       n_nodes_in_tree uint32
-    Then for each tree: n_nodes_in_tree × 20 bytes (same layout as V1)
+    Then for each tree: n_nodes_in_tree × 20 bytes (same node layout as V1)
 
-Go-side averaging: walk each tree's root, accumulate proba, divide by n_trees.
+For RandomForestClassifier the per-leaf proba is value[fraud_idx]/sum(value);
+for RandomForestRegressor the per-leaf "proba" is just value[0] — the leaf's
+predicted continuous target. The on-disk byte layout is the same so the Go
+runtime needs no changes. Go averages leaf values across trees in the forest
+(invN = 1/n_trees) — this matches sklearn's RandomForestRegressor.predict for
+mean target, and matches RandomForestClassifier.predict_proba for the
+fraud class when the classifier was trained with bootstrap on balanced
+classes.
 """
 
 from __future__ import annotations
@@ -34,8 +42,8 @@ import sys
 from pathlib import Path
 
 import joblib
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 MAGIC = 0x54524545
 VERSION_DT = 1
@@ -43,7 +51,19 @@ VERSION_RF = 2
 NODE_BYTES = 20
 
 
-def encode_tree(t, fraud_idx: int) -> bytes:
+def _proba_for_leaf(value, fraud_idx):
+    """value is sklearn's t.value[i] (shape (1, n_outputs) or (1, n_classes)).
+    For classifiers it's per-class counts; for regressors it's the predicted value."""
+    flat = value.flatten()
+    if fraud_idx is None or len(flat) == 1:
+        return float(flat[0])
+    total = float(flat.sum())
+    if total <= 0:
+        return 0.0
+    return float(flat[fraud_idx] / total)
+
+
+def encode_tree(t, fraud_idx) -> bytes:
     n = int(t.node_count)
     buf = bytearray(n * NODE_BYTES)
     for i in range(n):
@@ -51,9 +71,7 @@ def encode_tree(t, fraud_idx: int) -> bytes:
         threshold = float(t.threshold[i])
         left = int(t.children_left[i])
         right = int(t.children_right[i])
-        value = t.value[i].flatten()
-        total = float(value.sum())
-        proba = float(value[fraud_idx] / total) if total > 0 else 0.0
+        proba = _proba_for_leaf(t.value[i], fraud_idx)
         feat_out = -1 if left == -1 else feature
         off = i * NODE_BYTES
         struct.pack_into("<hh", buf, off, feat_out, 0)
@@ -63,22 +81,23 @@ def encode_tree(t, fraud_idx: int) -> bytes:
     return bytes(buf)
 
 
-def export_dt(clf: DecisionTreeClassifier, out_path: Path) -> dict:
-    fraud_idx = list(clf.classes_).index(1)
+def export_dt(clf, out_path: Path) -> dict:
+    fraud_idx = list(clf.classes_).index(1) if isinstance(clf, DecisionTreeClassifier) else None
     t = clf.tree_
     body = encode_tree(t, fraud_idx)
     header = struct.pack("<III", MAGIC, VERSION_DT, int(t.node_count))
     out_path.write_bytes(header + body)
     return {
-        "algo": "dt",
+        "algo": "dt-" + ("clf" if fraud_idx is not None else "reg"),
         "depth": clf.get_depth(),
         "leaves": clf.get_n_leaves(),
         "n_nodes": int(t.node_count),
     }
 
 
-def export_rf(clf: RandomForestClassifier, out_path: Path) -> dict:
-    fraud_idx = list(clf.classes_).index(1)
+def export_rf(clf, out_path: Path) -> dict:
+    is_classifier = isinstance(clf, RandomForestClassifier)
+    fraud_idx = list(clf.classes_).index(1) if is_classifier else None
     trees = clf.estimators_
     n_trees = len(trees)
     total_nodes = sum(int(t.tree_.node_count) for t in trees)
@@ -90,7 +109,7 @@ def export_rf(clf: RandomForestClassifier, out_path: Path) -> dict:
         parts.append(encode_tree(t.tree_, fraud_idx))
     out_path.write_bytes(b"".join(parts))
     return {
-        "algo": "rf",
+        "algo": "rf-" + ("clf" if is_classifier else "reg"),
         "n_trees": n_trees,
         "total_nodes": total_nodes,
         "avg_depth": sum(t.get_depth() for t in trees) / n_trees,
@@ -105,9 +124,9 @@ def main() -> int:
     args = ap.parse_args()
 
     clf = joblib.load(args.input)
-    if isinstance(clf, RandomForestClassifier):
+    if isinstance(clf, (RandomForestClassifier, RandomForestRegressor)):
         info = export_rf(clf, args.output)
-    elif isinstance(clf, DecisionTreeClassifier):
+    elif isinstance(clf, (DecisionTreeClassifier, DecisionTreeRegressor)):
         info = export_dt(clf, args.output)
     else:
         raise SystemExit(f"unsupported classifier type: {type(clf).__name__}")

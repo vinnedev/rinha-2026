@@ -15,7 +15,7 @@ x-api-env: &api-env
   HYBRID_HI: "0.8"
   GOMAXPROCS: "1"
   GOGC: "200"
-  GOMEMLIMIT: "30MiB"
+  GOMEMLIMIT: "40MiB"
 
 x-api: &api-defaults
   build:
@@ -41,8 +41,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.42"
-          memory: "160MB"
+          cpus: "0.45"
+          memory: "165MB"
 
   api2:
     <<: *api-defaults
@@ -54,8 +54,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.42"
-          memory: "160MB"
+          cpus: "0.45"
+          memory: "165MB"
 
   lb:
     image: nginx:1.27-alpine
@@ -80,8 +80,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.16"
-          memory: "30MB"
+          cpus: "0.10"
+          memory: "20MB"
 
 networks:
   rinha:
