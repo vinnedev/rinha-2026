@@ -3,18 +3,17 @@ x-api-env: &api-env
   SERVICE_NAME: rinha-2026
   LOG_LEVEL: warn
   LOG_FORMAT: json
-  READ_HEADER_TIMEOUT: 2s
-  READ_TIMEOUT: 5s
-  WRITE_TIMEOUT: 10s
+  READ_TIMEOUT: 3s
+  WRITE_TIMEOUT: 3s
   IDLE_TIMEOUT: 120s
   SHUTDOWN_TIMEOUT: 20s
-  MAX_HEADER_BYTES: "16384"
+  MAX_HEADER_BYTES: "8192"
   DATASET_PATH: /data/vectors.bin
   TREE_PATH: /data/fraud_dt.bin
   HYBRID_ENABLED: "true"
   HYBRID_LO: "0.2"
   HYBRID_HI: "0.8"
-  GOMAXPROCS: "4"
+  GOMAXPROCS: "1"
   GOGC: "200"
   GOMEMLIMIT: "30MiB"
 
@@ -56,22 +55,21 @@ services:
           memory: "160MB"
 
   lb:
-    image: ghcr.io/vinnedev/rinha-2026-lb:latest
+    image: nginx:1.27-alpine
     platform: linux/amd64
     container_name: rinha-lb
     depends_on:
       - api1
       - api2
-    environment:
-      PORT: "9999"
-      UPSTREAMS: /sockets/api1.sock,/sockets/api2.sock
-      GOMAXPROCS: "2"
-      GOGC: "200"
-      GOMEMLIMIT: "20MiB"
     ports:
       - "9999:9999"
     volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - sockets:/sockets
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     networks:
       - rinha
     restart: unless-stopped
