@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/vinnedev/rinha-2026/internal/fraud"
 )
@@ -74,31 +75,15 @@ var rawReadBufPool = sync.Pool{
 	},
 }
 
-// RawServer owns a Unix-domain listener and serves HTTP/1.1 with a per-
-// connection keep-alive loop. The per-request hot path:
-//
-//	1. find header end (\r\n\r\n)
-//	2. extract path and content-length
-//	3. read body bytes into the same buffer
-//	4. call the route handler
-//	5. write a pre-computed response byte slice
-//
-// No header map, no per-request allocations on the hot path. Pipelined
-// requests share one read buffer per connection.
 type RawServer struct {
 	svc *fraud.Service
 	ln  net.Listener
 }
 
-// NewRawServer creates a server but does not start it. Call ServeUnix to
-// bind a socket and start accepting.
 func NewRawServer(svc *fraud.Service) *RawServer {
 	return &RawServer{svc: svc}
 }
 
-// ServeUnix removes any stale socket file at path, binds a new Unix
-// listener, and runs the accept loop in a goroutine. Returns the listener
-// so the caller can close it on shutdown.
 func (s *RawServer) ServeUnix(path string) (net.Listener, error) {
 	_ = os.Remove(path)
 	lc := &net.ListenConfig{}
@@ -112,7 +97,6 @@ func (s *RawServer) ServeUnix(path string) (net.Listener, error) {
 	return ln, nil
 }
 
-// ServeTCP binds a TCP listener at addr and runs the accept loop.
 func (s *RawServer) ServeTCP(addr string) (net.Listener, error) {
 	lc := &net.ListenConfig{}
 	ln, err := lc.Listen(context.Background(), "tcp", addr)
@@ -249,7 +233,14 @@ func (s *RawServer) scoreRawHTTP(body []byte) []byte {
 		case shedSem <- struct{}{}:
 			defer func() { <-shedSem }()
 		default:
-			return rawApprovedZero
+			timer := time.NewTimer(shedTimeout)
+			select {
+			case shedSem <- struct{}{}:
+				timer.Stop()
+				defer func() { <-shedSem }()
+			case <-timer.C:
+				return rawApprovedZero
+			}
 		}
 	}
 	p := intPayloadPool.Get().(*fraud.IntPayload)
@@ -335,7 +326,7 @@ func isContentLengthPrefix(b []byte) bool {
 	if len(b) < len(name) {
 		return false
 	}
-	for i := 0; i < 15; i++ {
+	for i := 0; i < len(name); i++ {
 		c := b[i]
 		if c >= 'A' && c <= 'Z' {
 			c += 'a' - 'A'

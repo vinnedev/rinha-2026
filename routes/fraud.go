@@ -2,9 +2,11 @@ package routes
 
 import (
 	"sync"
+	"time"
 
 	"github.com/valyala/fasthttp"
 
+	"github.com/vinnedev/rinha-2026/config"
 	"github.com/vinnedev/rinha-2026/internal/fraud"
 )
 
@@ -25,6 +27,23 @@ var intPayloadPool = sync.Pool{
 	New: func() any { return new(fraud.IntPayload) },
 }
 
+// shedSem caps the number of concurrent ScoreInt evaluations per process.
+// With GOMAXPROCS=1 the scheduler can only make progress on one goroutine
+// at a time anyway, so an unbounded queue piles latency directly onto the
+// p99 tail when a request stalls (GC, page-fault, scheduler tick). The
+// semaphore short-circuits the overflow with the safe-approve response.
+//
+// nil sem disables shedding (SHED_SLOTS=0 or unset).
+var shedSem chan struct{}
+var shedTimeout time.Duration
+
+func init() {
+	if config.SHED_SLOTS > 0 {
+		shedSem = make(chan struct{}, config.SHED_SLOTS)
+	}
+	shedTimeout = config.SHED_TIMEOUT
+}
+
 type fraudHandler struct {
 	svc *fraud.Service
 }
@@ -35,12 +54,29 @@ func newFraudHandler(svc *fraud.Service) *fraudHandler {
 
 // scoreRaw is the fasthttp handler. Hot path: positional zero-alloc parser
 // straight into IntPayload, then ScoreInt for integer-only vectorization
-// followed by the hybrid RF→VP-Tree classifier.
+// followed by the hybrid RF -> VP-Tree classifier.
 func (h *fraudHandler) scoreRaw(ctx *fasthttp.RequestCtx) {
 	body := ctx.PostBody()
 	if len(body) == 0 {
 		writeFixed(ctx, respApprovedZero)
 		return
+	}
+
+	if shedSem != nil {
+		select {
+		case shedSem <- struct{}{}:
+			defer func() { <-shedSem }()
+		default:
+			timer := time.NewTimer(shedTimeout)
+			select {
+			case shedSem <- struct{}{}:
+				timer.Stop()
+				defer func() { <-shedSem }()
+			case <-timer.C:
+				writeFixed(ctx, respApprovedZero)
+				return
+			}
+		}
 	}
 
 	p := intPayloadPool.Get().(*fraud.IntPayload)

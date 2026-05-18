@@ -23,21 +23,9 @@ func VectorizeInt(p *IntPayload, out []int16) {
 	}
 	out[7] = quantMilli(p.KmFromHomeMilli, maxKmMilli)
 	out[8] = quantMilli(uint64(p.TxCount24h)*1000, maxTxCount24hMilli)
-	if p.IsOnline {
-		out[9] = domain.Scale
-	} else {
-		out[9] = 0
-	}
-	if p.CardPresent {
-		out[10] = domain.Scale
-	} else {
-		out[10] = 0
-	}
-	if p.IsUnknownMerchant {
-		out[11] = domain.Scale
-	} else {
-		out[11] = 0
-	}
+	out[9] = boolDim(p.IsOnline)
+	out[10] = boolDim(p.CardPresent)
+	out[11] = boolDim(p.IsUnknownMerchant)
 	out[12] = mccRiskQuantInt(p.Mcc)
 	out[13] = quantMilli(p.MerchantAvgAmountMilli, maxMerchantAvgAmountMilli)
 }

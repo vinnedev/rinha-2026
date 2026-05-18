@@ -12,10 +12,6 @@ import (
 	"github.com/vinnedev/rinha-2026/config"
 )
 
-// NewServer wires a fasthttp.Server with timeouts taken from env. fasthttp
-// avoids the per-request allocations net/http does (no header maps,
-// no request struct allocation, body lives in the connection buffer),
-// which keeps the API throughput up on the slow Mac Mini test machine.
 func NewServer(handler fasthttp.RequestHandler) *fasthttp.Server {
 	return &fasthttp.Server{
 		Handler:                       handler,
@@ -32,9 +28,6 @@ func NewServer(handler fasthttp.RequestHandler) *fasthttp.Server {
 	}
 }
 
-// NewListener picks a Unix-domain socket when SOCKET_PATH is set, else TCP.
-// Unix sockets shave significant per-request CPU compared to TCP/loopback
-// inside containers and let the LB/API pair share kernel buffers directly.
 func NewListener(ctx context.Context, fallbackAddr string) (net.Listener, error) {
 	if path := config.SOCKET_PATH; path != "" {
 		_ = os.Remove(path)

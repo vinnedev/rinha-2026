@@ -6,11 +6,6 @@ import (
 	"github.com/vinnedev/rinha-2026/internal/fraud"
 )
 
-// New returns a fasthttp.RequestHandler that dispatches the three known paths
-// without any router data structure — just byte comparison. fasthttp is
-// dramatically lighter per request than net/http (no header allocations,
-// no chunked-encoding state machine on simple POSTs), which matters on the
-// slow 2-core Mac Mini that runs the rinha tests.
 func New(svc *fraud.Service) fasthttp.RequestHandler {
 	var fraudH func(ctx *fasthttp.RequestCtx)
 	if svc != nil {

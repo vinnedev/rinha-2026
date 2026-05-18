@@ -16,12 +16,9 @@ var scoreTable = [search.K + 1]float64{
 	1.0,
 }
 
-// Service implements a hybrid classifier:
-//   - DT/RF predicts a fraud probability (constant-time tree walk)
-//   - if the score is in the uncertain band [lo, hi], fall back to the
-//     exact k-NN oracle (VP-Tree); otherwise the DT verdict is used as-is.
-//
-// idx may be nil: in that case the DT verdict is always used (no fallback).
+// Service is a hybrid fraud classifier: the RF/DT walk gives a constant-time
+// verdict; when that verdict falls inside the uncertain band [lo, hi], the
+// exact k-NN oracle (VP-Tree) refines it. idx == nil disables the fallback.
 type Service struct {
 	tree *tree.Tree
 	idx  *dataset.Index
@@ -33,16 +30,6 @@ func NewService(t *tree.Tree, idx *dataset.Index, lo, hi float64) *Service {
 	return &Service{tree: t, idx: idx, lo: lo, hi: hi}
 }
 
-func (s *Service) Score(p *domain.FraudPayload) domain.FraudResponse {
-	var q [domain.Dim]int16
-	Vectorize(p, q[:])
-	return s.scoreFromVector(q)
-}
-
-// ScoreInt is the fast path: take an already-parsed IntPayload (zero float,
-// zero allocation) and run the same hybrid (RF → VP-Tree). Identical
-// verdicts to Score for any payload; the only difference is shaved-off
-// JSON parse + float→int conversion cost on the way in.
 func (s *Service) ScoreInt(p *IntPayload) domain.FraudResponse {
 	var q [domain.Dim]int16
 	VectorizeInt(p, q[:])
