@@ -80,6 +80,29 @@ services:
           cpus: "0.16"
           memory: "30MB"
 
+  warmup:
+    image: curlimages/curl:8.10.1
+    platform: linux/amd64
+    container_name: rinha-warmup
+    entrypoint: ["/bin/sh", "/warmup.sh"]
+    environment:
+      BASE_URL: http://lb:9999
+      READY_RETRIES: "240"
+      READY_SLEEP: "0.25"
+      WARMUP_ROUNDS: "120"
+    volumes:
+      - ./warmup.sh:/warmup.sh:ro
+    depends_on:
+      - lb
+    networks:
+      - rinha
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.02"
+          memory: "6MB"
+
 networks:
   rinha:
     driver: bridge
