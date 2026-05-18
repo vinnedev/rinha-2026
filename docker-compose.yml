@@ -18,7 +18,7 @@ x-api-env: &api-env
   GOMEMLIMIT: "30MiB"
 
 x-api: &api-defaults
-  image: ghcr.io/vinnedev/rinha-2026-api:v4-optimized
+  image: ghcr.io/vinnedev/rinha-2026-api:v6-optimized
   platform: linux/amd64
   networks:
     - rinha
@@ -35,6 +35,9 @@ services:
     environment:
       <<: *api-env
       SOCKET_PATH: /sockets/api1.sock
+      CTRL_SOCKET_PATH: /sockets/api1.sock.ctrl
+    security_opt:
+      - seccomp:unconfined
     deploy:
       resources:
         limits:
@@ -48,6 +51,9 @@ services:
     environment:
       <<: *api-env
       SOCKET_PATH: /sockets/api2.sock
+      CTRL_SOCKET_PATH: /sockets/api2.sock.ctrl
+    security_opt:
+      - seccomp:unconfined
     deploy:
       resources:
         limits:
@@ -55,21 +61,27 @@ services:
           memory: "160MB"
 
   lb:
-    image: nginx:1.27-alpine
+    image: jrblatt/so-no-forevis:v1.0.0
     platform: linux/amd64
     container_name: rinha-lb
+    environment:
+      UPSTREAMS: /sockets/api1.sock,/sockets/api2.sock
+      PORT: "9999"
+      BUF_SIZE: "4096"
+      WORKERS: "1"
+    volumes:
+      - sockets:/sockets
+    ports:
+      - "9999:9999"
     depends_on:
       - api1
       - api2
-    ports:
-      - "9999:9999"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - sockets:/sockets
     ulimits:
       nofile:
         soft: 65535
         hard: 65535
+    security_opt:
+      - seccomp:unconfined
     networks:
       - rinha
     restart: unless-stopped
