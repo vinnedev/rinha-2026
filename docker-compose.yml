@@ -18,7 +18,7 @@ x-api-env: &api-env
   GOMEMLIMIT: "30MiB"
 
 x-api: &api-defaults
-  image: ghcr.io/vinnedev/rinha-2026-api:v2-fasthttp
+  image: ghcr.io/vinnedev/rinha-2026-api:v4-optimized
   platform: linux/amd64
   networks:
     - rinha
