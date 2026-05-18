@@ -44,8 +44,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.42"
-          memory: "160MB"
+          cpus: "0.44"
+          memory: "164MB"
 
   api2:
     <<: *api-defaults
@@ -57,8 +57,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.42"
-          memory: "160MB"
+          cpus: "0.44"
+          memory: "164MB"
 
   lb:
     image: haproxy:3.0-alpine
@@ -84,8 +84,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.16"
-          memory: "30MB"
+          cpus: "0.10"
+          memory: "16MB"
 
   warmup:
     image: curlimages/curl:8.10.1
