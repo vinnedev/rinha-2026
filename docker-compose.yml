@@ -15,14 +15,10 @@ x-api-env: &api-env
   HYBRID_HI: "0.8"
   GOMAXPROCS: "1"
   GOGC: "200"
-  GOMEMLIMIT: "40MiB"
-  WARMUP_ITERS: "500"
-  STEADY_GC_OFF: "false"
-  SHED_SLOTS: "0"
-  USE_RAWHTTP: "false"
+  GOMEMLIMIT: "30MiB"
 
 x-api: &api-defaults
-  image: ghcr.io/vinnedev/rinha-2026-api:v5-optimized
+  image: ghcr.io/vinnedev/rinha-2026-api:v4-optimized
   platform: linux/amd64
   networks:
     - rinha
