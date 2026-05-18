@@ -10,6 +10,15 @@ import (
 const (
 	K        = 5
 	KDistill = 6
+
+	// earlyExitRadiusSq is the squared distance below which any candidate is
+	// considered "obviously a close neighbor". When the K-th best distance
+	// falls below this threshold the recursion bails out: any not-yet-visited
+	// branch can only contain candidates further away than the ones we
+	// already have. The constant mirrors RINHA_EARLY_DISTANCE_MILLI=140 from
+	// the C top-1 implementation: 0.14 in normalized [0,1] coordinates,
+	// squared, then upgraded to the Scale=10000 quantized space.
+	earlyExitRadiusSq int64 = 1400 * 1400
 )
 
 type knn struct {
@@ -52,6 +61,13 @@ func (k *knn) radius() int64 {
 		return math.MaxInt64
 	}
 	return k.dists[k.worst]
+}
+
+// earlyDone reports whether the K-best heap is already tight enough that we
+// can stop exploring the rest of the VP-Tree. We require the heap to be full
+// and the worst-of-best to sit inside the earlyExitRadiusSq sphere.
+func (k *knn) earlyDone() bool {
+	return k.count == K && k.dists[k.worst] <= earlyExitRadiusSq
 }
 
 func (k *knn) fraudCount() int {
@@ -126,6 +142,9 @@ func search(idx *dataset.Index, k *knn, lo, hi int, qp *[16]int16) {
 
 	d := distSqRow(idx.Vectors, lo, qp)
 	k.consider(d, idx.Labels[lo])
+	if k.earlyDone() {
+		return
+	}
 
 	if hi-lo == 1 {
 		return
@@ -138,12 +157,18 @@ func search(idx *dataset.Index, k *knn, lo, hi int, qp *[16]int16) {
 
 	if d < thr {
 		search(idx, k, lo+1, splitMid, qp)
+		if k.earlyDone() {
+			return
+		}
 		if mayContain(d, thr, k.radius(), false) {
 			search(idx, k, splitMid, hi, qp)
 		}
 		return
 	}
 	search(idx, k, splitMid, hi, qp)
+	if k.earlyDone() {
+		return
+	}
 	if mayContain(d, thr, k.radius(), true) {
 		search(idx, k, lo+1, splitMid, qp)
 	}
