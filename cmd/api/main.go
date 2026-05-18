@@ -16,6 +16,7 @@ import (
 
 	"github.com/vinnedev/rinha-2026/config"
 	"github.com/vinnedev/rinha-2026/internal/dataset"
+	"github.com/vinnedev/rinha-2026/internal/fdpass"
 	"github.com/vinnedev/rinha-2026/internal/fraud"
 	"github.com/vinnedev/rinha-2026/internal/tree"
 	"github.com/vinnedev/rinha-2026/pkg/logger"
@@ -120,6 +121,14 @@ func main() {
 			log.Error("rawhttp_listen_failed", slog.Any("error", err))
 			return
 		}
+		if config.CTRL_SOCKET_PATH != "" {
+			if ch, _, ferr := fdpass.Listen(config.CTRL_SOCKET_PATH); ferr != nil {
+				log.Warn("fdpass_listen_failed", slog.String("path", config.CTRL_SOCKET_PATH), slog.Any("error", ferr))
+			} else {
+				go rawSrv.ServeFDChannel(ch)
+				log.Info("fdpass_listening", slog.String("path", config.CTRL_SOCKET_PATH))
+			}
+		}
 		routes.RawMarkReady()
 		log.Info("rawhttp_server_starting", slog.String("addr", ln.Addr().String()))
 		<-ctx.Done()
@@ -133,10 +142,26 @@ func main() {
 	srv := routes.NewServer(routes.New(svc))
 	addr := routes.ListenAddr()
 
-	listener, err := routes.NewListener(ctx, net.JoinHostPort(config.HOST, config.PORT))
+	regular, err := routes.NewListener(ctx, net.JoinHostPort(config.HOST, config.PORT))
 	if err != nil {
 		log.Error("listener_failed", slog.String("addr", addr), slog.Any("error", err))
 		return
+	}
+
+	var fdCh <-chan int
+	if config.CTRL_SOCKET_PATH != "" {
+		ch, _, ferr := fdpass.Listen(config.CTRL_SOCKET_PATH)
+		if ferr != nil {
+			log.Warn("fdpass_listen_failed", slog.String("path", config.CTRL_SOCKET_PATH), slog.Any("error", ferr))
+		} else {
+			fdCh = ch
+			log.Info("fdpass_listening", slog.String("path", config.CTRL_SOCKET_PATH))
+		}
+	}
+
+	listener := net.Listener(regular)
+	if fdCh != nil {
+		listener = routes.NewCombinedListener(regular, fdCh)
 	}
 
 	serverErr := make(chan error, 1)

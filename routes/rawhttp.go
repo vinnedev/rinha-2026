@@ -97,6 +97,21 @@ func (s *RawServer) ServeUnix(path string) (net.Listener, error) {
 	return ln, nil
 }
 
+// ServeFDChannel adopts fds received over an SCM_RIGHTS control channel
+// and runs handleConn on each. fdCh is owned by the fdpass receiver and
+// closed on shutdown.
+func (s *RawServer) ServeFDChannel(fdCh <-chan int) {
+	for fd := range fdCh {
+		f := os.NewFile(uintptr(fd), "scm-fd")
+		c, err := net.FileConn(f)
+		_ = f.Close()
+		if err != nil {
+			continue
+		}
+		go s.handleConn(c)
+	}
+}
+
 func (s *RawServer) ServeTCP(addr string) (net.Listener, error) {
 	lc := &net.ListenConfig{}
 	ln, err := lc.Listen(context.Background(), "tcp", addr)

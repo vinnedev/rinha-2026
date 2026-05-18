@@ -31,7 +31,8 @@ var (
 	HYBRID_LO      = parseFloat("HYBRID_LO", 0.2)
 	HYBRID_HI      = parseFloat("HYBRID_HI", 0.8)
 
-	SOCKET_PATH = dotenv.GetEnv("SOCKET_PATH", "")
+	SOCKET_PATH      = dotenv.GetEnv("SOCKET_PATH", "")
+	CTRL_SOCKET_PATH = dotenv.GetEnv("CTRL_SOCKET_PATH", "")
 
 	WARMUP_ITERS = parseInt("WARMUP_ITERS", 500)
 
