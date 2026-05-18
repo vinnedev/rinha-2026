@@ -36,7 +36,20 @@ func NewService(t *tree.Tree, idx *dataset.Index, lo, hi float64) *Service {
 func (s *Service) Score(p *domain.FraudPayload) domain.FraudResponse {
 	var q [domain.Dim]int16
 	Vectorize(p, q[:])
+	return s.scoreFromVector(q)
+}
 
+// ScoreInt is the fast path: take an already-parsed IntPayload (zero float,
+// zero allocation) and run the same hybrid (RF → VP-Tree). Identical
+// verdicts to Score for any payload; the only difference is shaved-off
+// JSON parse + float→int conversion cost on the way in.
+func (s *Service) ScoreInt(p *IntPayload) domain.FraudResponse {
+	var q [domain.Dim]int16
+	VectorizeInt(p, q[:])
+	return s.scoreFromVector(q)
+}
+
+func (s *Service) scoreFromVector(q [domain.Dim]int16) domain.FraudResponse {
 	var fq [domain.Dim]float32
 	scale := float32(domain.Scale)
 	for i := 0; i < domain.Dim; i++ {
