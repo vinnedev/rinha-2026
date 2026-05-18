@@ -11,3 +11,4 @@
 /model/metrics*.json
 *.log
 .DS_Store
+.claude/
