@@ -15,10 +15,10 @@ x-api-env: &api-env
   HYBRID_HI: "0.8"
   GOMAXPROCS: "1"
   GOGC: "200"
-  GOMEMLIMIT: "40MiB"
+  GOMEMLIMIT: "30MiB"
 
 x-api: &api-defaults
-  image: ghcr.io/vinnedev/rinha-2026-api:latest
+  image: ghcr.io/vinnedev/rinha-2026-api:v2-fasthttp
   platform: linux/amd64
   networks:
     - rinha
@@ -38,8 +38,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.45"
-          memory: "165MB"
+          cpus: "0.42"
+          memory: "160MB"
 
   api2:
     <<: *api-defaults
@@ -51,8 +51,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.45"
-          memory: "165MB"
+          cpus: "0.42"
+          memory: "160MB"
 
   lb:
     image: nginx:1.27-alpine
@@ -77,8 +77,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.10"
-          memory: "20MB"
+          cpus: "0.16"
+          memory: "30MB"
 
 networks:
   rinha:
