@@ -38,6 +38,14 @@ var (
 	SOCKET_PATH = dotenv.GetEnv("SOCKET_PATH", "")
 
 	WARMUP_ITERS = parseInt("WARMUP_ITERS", 500)
+
+	STEADY_GC_OFF      = parseBool("STEADY_GC_OFF", false)
+	STEADY_GC_INTERVAL = parseDuration("STEADY_GC_INTERVAL", 5*time.Second)
+
+	SHED_SLOTS   = parseInt("SHED_SLOTS", 0)
+	SHED_TIMEOUT = parseDuration("SHED_TIMEOUT", 3*time.Millisecond)
+
+	USE_RAWHTTP = parseBool("USE_RAWHTTP", false)
 )
 
 func IsProduction() bool {

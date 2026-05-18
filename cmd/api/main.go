@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"runtime/pprof"
 	"sync"
 	"syscall"
@@ -93,6 +94,42 @@ func main() {
 		)
 	}
 
+	// Steady-state GC mode: the hot path has no heap escapes (verified via
+	// `go build -gcflags=-m`); ScoreInt's IntPayload and the q [Dim]int16
+	// stack-allocate, and response bodies are package-level constants.
+	// With auto-GC active, a GC firing mid-request adds 50-500us of STW
+	// pause that lands directly in the p99 tail. Switching to a fixed
+	// 5s ticker keeps GC off the request path while still bounding heap
+	// growth (GOMEMLIMIT remains enforced; if anything leaks Go GCs anyway).
+	if config.STEADY_GC_OFF {
+		debug.SetGCPercent(-1)
+		go steadyGCLoop(ctx, log, config.STEADY_GC_INTERVAL)
+		log.Info("steady_gc_enabled", slog.Duration("interval", config.STEADY_GC_INTERVAL))
+	}
+
+	if config.USE_RAWHTTP {
+		rawSrv := routes.NewRawServer(svc)
+		var ln net.Listener
+		var err error
+		if config.SOCKET_PATH != "" {
+			ln, err = rawSrv.ServeUnix(config.SOCKET_PATH)
+		} else {
+			ln, err = rawSrv.ServeTCP(net.JoinHostPort(config.HOST, config.PORT))
+		}
+		if err != nil {
+			log.Error("rawhttp_listen_failed", slog.Any("error", err))
+			return
+		}
+		routes.RawMarkReady()
+		log.Info("rawhttp_server_starting", slog.String("addr", ln.Addr().String()))
+		<-ctx.Done()
+		log.Info("signal_received")
+		routes.RawMarkNotReady()
+		_ = ln.Close()
+		log.Info("shutdown_complete")
+		return
+	}
+
 	srv := routes.NewServer(routes.New(svc))
 	addr := routes.ListenAddr()
 
@@ -126,6 +163,29 @@ func main() {
 		return
 	}
 	log.Info("shutdown_complete")
+}
+
+// steadyGCLoop runs runtime.GC() on a fixed ticker until ctx is cancelled.
+// Pairs with debug.SetGCPercent(-1) so the auto-GC scheduler doesn't fire
+// mid-request.
+func steadyGCLoop(ctx context.Context, log *slog.Logger, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			start := time.Now()
+			runtime.GC()
+			if d := time.Since(start); d > 5*time.Millisecond {
+				log.Warn("steady_gc_slow", slog.Duration("elapsed", d))
+			}
+		}
+	}
 }
 
 // loadResources loads the tree and (if hybrid is enabled) the VP-Tree dataset
