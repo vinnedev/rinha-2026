@@ -5,8 +5,10 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"os"
 	"os/signal"
 	"runtime"
+	"runtime/pprof"
 	"sync"
 	"syscall"
 	"time"
@@ -29,6 +31,30 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// PGO profile collection — only fires when RINHA_PGO_PROFILE points at a
+	// writable file. Used once, off-line, to capture a CPU profile that the
+	// next build feeds back via `-pgo=auto` (Go 1.21+ auto-detects
+	// cmd/api/default.pgo). In production the env var is unset and this
+	// path is dead code that the inliner drops.
+	if pgoPath := os.Getenv("RINHA_PGO_PROFILE"); pgoPath != "" {
+		f, perr := os.Create(pgoPath)
+		if perr != nil {
+			log.Error("pgo_profile_create_failed", slog.String("path", pgoPath), slog.Any("error", perr))
+		} else {
+			if perr := pprof.StartCPUProfile(f); perr != nil {
+				log.Error("pgo_profile_start_failed", slog.Any("error", perr))
+				_ = f.Close()
+			} else {
+				log.Info("pgo_profile_started", slog.String("path", pgoPath))
+				defer func() {
+					pprof.StopCPUProfile()
+					_ = f.Close()
+					log.Info("pgo_profile_saved", slog.String("path", pgoPath))
+				}()
+			}
+		}
+	}
 
 	tr, idx, err := loadResources(log)
 	if err != nil {
