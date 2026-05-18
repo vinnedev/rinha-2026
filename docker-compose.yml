@@ -55,7 +55,7 @@ services:
           memory: "160MB"
 
   lb:
-    image: haproxy:2.9-alpine
+    image: nginx:1.27-alpine
     platform: linux/amd64
     container_name: rinha-lb
     depends_on:
@@ -64,7 +64,7 @@ services:
     ports:
       - "9999:9999"
     volumes:
-      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - sockets:/sockets
     ulimits:
       nofile:
