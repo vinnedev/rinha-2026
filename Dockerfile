@@ -1,10 +1,10 @@
 FROM golang:1.26-alpine AS build
 WORKDIR /src
-ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v3
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api && \
+RUN go build -trimpath -pgo=cmd/api/default.pgo -ldflags="-s -w" -o /out/api ./cmd/api && \
     go build -trimpath -ldflags="-s -w" -o /out/preprocess ./cmd/preprocess
 
 FROM build AS prep

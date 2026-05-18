@@ -18,18 +18,16 @@ func MarkReady()    { ready.Store(true) }
 func MarkNotReady() { ready.Store(false) }
 
 func liveness(ctx *fasthttp.RequestCtx) {
-	ctx.SetContentType(contentTypeApplJSON)
-	ctx.SetStatusCode(fasthttp.StatusOK)
-	ctx.SetBody(aliveJSON)
+	ctx.Response.Header.SetContentTypeBytes(contentTypeApplJSON)
+	ctx.Response.SetBodyRaw(aliveJSON)
 }
 
 func readiness(ctx *fasthttp.RequestCtx) {
-	ctx.SetContentType(contentTypeApplJSON)
+	ctx.Response.Header.SetContentTypeBytes(contentTypeApplJSON)
 	if !ready.Load() {
 		ctx.SetStatusCode(fasthttp.StatusServiceUnavailable)
-		ctx.SetBody(notReady)
+		ctx.Response.SetBodyRaw(notReady)
 		return
 	}
-	ctx.SetStatusCode(fasthttp.StatusOK)
-	ctx.SetBody(readyJSON)
+	ctx.Response.SetBodyRaw(readyJSON)
 }

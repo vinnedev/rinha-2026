@@ -5,7 +5,6 @@ import (
 
 	"github.com/valyala/fasthttp"
 
-	"github.com/vinnedev/rinha-2026/internal/domain"
 	"github.com/vinnedev/rinha-2026/internal/fraud"
 )
 
@@ -19,11 +18,11 @@ var (
 	respDeniedP8     = []byte(`{"approved":false,"fraud_score":0.8}`)
 	respDeniedOne    = []byte(`{"approved":false,"fraud_score":1}`)
 
-	contentTypeApplJSON = "application/json"
+	contentTypeApplJSON = []byte("application/json")
 )
 
-var payloadPool = sync.Pool{
-	New: func() any { return new(domain.FraudPayload) },
+var intPayloadPool = sync.Pool{
+	New: func() any { return new(fraud.IntPayload) },
 }
 
 type fraudHandler struct {
@@ -34,9 +33,9 @@ func newFraudHandler(svc *fraud.Service) *fraudHandler {
 	return &fraudHandler{svc: svc}
 }
 
-// scoreRaw is the fasthttp handler. fasthttp already owns the request body
-// buffer (ctx.PostBody), parses headers once, and reuses ctx between calls,
-// so we don't pool anything except the FraudPayload struct.
+// scoreRaw is the fasthttp handler. Hot path: positional zero-alloc parser
+// straight into IntPayload, then ScoreInt for integer-only vectorization
+// followed by the hybrid RF→VP-Tree classifier.
 func (h *fraudHandler) scoreRaw(ctx *fasthttp.RequestCtx) {
 	body := ctx.PostBody()
 	if len(body) == 0 {
@@ -44,17 +43,16 @@ func (h *fraudHandler) scoreRaw(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	p := payloadPool.Get().(*domain.FraudPayload)
-	*p = domain.FraudPayload{}
+	p := intPayloadPool.Get().(*fraud.IntPayload)
 
-	if err := fraud.ParsePayload(body, p); err != nil {
-		payloadPool.Put(p)
+	if !fraud.ParseFast(body, p) {
+		intPayloadPool.Put(p)
 		writeFixed(ctx, respApprovedZero)
 		return
 	}
 
-	resp := h.svc.Score(p)
-	payloadPool.Put(p)
+	resp := h.svc.ScoreInt(p)
+	intPayloadPool.Put(p)
 
 	writeFixed(ctx, pickResponse(resp.FraudScore))
 }
@@ -76,8 +74,12 @@ func pickResponse(score float64) []byte {
 	}
 }
 
+// writeFixed emits a pre-computed response body. SetBodyRaw passes the
+// slice by reference (zero-copy) — safe because every body in this file
+// is an immutable package-level constant. SetContentTypeBytes avoids the
+// string→byte allocation that the SetContentType setter performs.
+// Status code defaults to 200 OK so we skip SetStatusCode.
 func writeFixed(ctx *fasthttp.RequestCtx, body []byte) {
-	ctx.SetContentType(contentTypeApplJSON)
-	ctx.SetStatusCode(fasthttp.StatusOK)
-	ctx.SetBody(body)
+	ctx.Response.Header.SetContentTypeBytes(contentTypeApplJSON)
+	ctx.Response.SetBodyRaw(body)
 }
