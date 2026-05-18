@@ -83,6 +83,16 @@ func main() {
 		slog.Int("tree_count", tr.TreeCount()),
 	)
 
+	if config.WARMUP_ITERS > 0 {
+		t0 := time.Now()
+		svc.Warmup(config.WARMUP_ITERS)
+		runtime.GC()
+		log.Info("warmup_done",
+			slog.Int("iters", config.WARMUP_ITERS),
+			slog.Duration("elapsed", time.Since(t0)),
+		)
+	}
+
 	srv := routes.NewServer(routes.New(svc))
 	addr := routes.ListenAddr()
 

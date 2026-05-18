@@ -36,6 +36,8 @@ var (
 	HYBRID_HI        = parseFloat("HYBRID_HI", 0.8)
 
 	SOCKET_PATH = dotenv.GetEnv("SOCKET_PATH", "")
+
+	WARMUP_ITERS = parseInt("WARMUP_ITERS", 500)
 )
 
 func IsProduction() bool {
