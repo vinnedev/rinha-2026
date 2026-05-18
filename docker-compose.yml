@@ -15,12 +15,10 @@ x-api-env: &api-env
   HYBRID_HI: "0.8"
   GOMAXPROCS: "1"
   GOGC: "200"
-  GOMEMLIMIT: "140MiB"
+  GOMEMLIMIT: "40MiB"
   WARMUP_ITERS: "500"
-  STEADY_GC_OFF: "true"
-  STEADY_GC_INTERVAL: "5s"
+  STEADY_GC_OFF: "false"
   SHED_SLOTS: "0"
-  SHED_TIMEOUT: "3ms"
   USE_RAWHTTP: "false"
 
 x-api: &api-defaults
@@ -44,8 +42,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.44"
-          memory: "164MB"
+          cpus: "0.42"
+          memory: "160MB"
 
   api2:
     <<: *api-defaults
@@ -57,11 +55,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.44"
-          memory: "164MB"
+          cpus: "0.42"
+          memory: "160MB"
 
   lb:
-    image: haproxy:3.0-alpine
+    image: nginx:1.27-alpine
     platform: linux/amd64
     container_name: rinha-lb
     depends_on:
@@ -70,9 +68,8 @@ services:
     ports:
       - "9999:9999"
     volumes:
-      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - sockets:/sockets
-    command: ["haproxy", "-f", "/usr/local/etc/haproxy/haproxy.cfg", "-db"]
     ulimits:
       nofile:
         soft: 65535
@@ -84,31 +81,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.10"
-          memory: "16MB"
-
-  warmup:
-    image: curlimages/curl:8.10.1
-    platform: linux/amd64
-    container_name: rinha-warmup
-    entrypoint: ["/bin/sh", "/warmup.sh"]
-    environment:
-      BASE_URL: http://lb:9999
-      READY_RETRIES: "240"
-      READY_SLEEP: "0.25"
-      WARMUP_ROUNDS: "120"
-    volumes:
-      - ./warmup.sh:/warmup.sh:ro
-    depends_on:
-      - lb
-    networks:
-      - rinha
-    restart: "no"
-    deploy:
-      resources:
-        limits:
-          cpus: "0.02"
-          memory: "6MB"
+          cpus: "0.16"
+          memory: "30MB"
 
 networks:
   rinha:
