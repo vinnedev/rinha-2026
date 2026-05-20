@@ -9,15 +9,14 @@ x-api-env: &api-env
   HYBRID_LO: "0.2"
   HYBRID_HI: "0.8"
   STEADY_GC_OFF: "true"
-  STEADY_GC_INTERVAL: 30s
   SHED_SLOTS: "4"
   WARMUP_ITERS: "500"
   GOMAXPROCS: "1"
   GOGC: "200"
-  GOMEMLIMIT: "40MiB"
+  GOMEMLIMIT: "80MiB"
 
 x-api: &api-defaults
-  image: ghcr.io/vinnedev/rinha-2026-api:v8-knn-sqrt
+  image: ghcr.io/vinnedev/rinha-2026-api:v9-haproxy
   platform: linux/amd64
   networks:
     - rinha
@@ -34,7 +33,6 @@ services:
     environment:
       <<: *api-env
       SOCKET_PATH: /sockets/api1.sock
-      CTRL_SOCKET_PATH: /sockets/api1.ctrl
     deploy:
       resources:
         limits:
@@ -48,7 +46,6 @@ services:
     environment:
       <<: *api-env
       SOCKET_PATH: /sockets/api2.sock
-      CTRL_SOCKET_PATH: /sockets/api2.ctrl
     deploy:
       resources:
         limits:
@@ -56,20 +53,18 @@ services:
           memory: "165MB"
 
   lb:
-    image: ghcr.io/vinnedev/rinha-2026-api:v8-knn-sqrt
+    image: haproxy:3.0-alpine
     platform: linux/amd64
     container_name: rinha-lb
     depends_on:
       - api1
       - api2
-    entrypoint: ["/lb"]
-    environment:
-      LB_ADDR: ":9999"
-      LB_UPSTREAMS: "/sockets/api1.ctrl,/sockets/api2.ctrl"
+    command: ["haproxy", "-f", "/usr/local/etc/haproxy/haproxy.cfg", "-db"]
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - sockets:/sockets
     ports:
       - "9999:9999"
-    volumes:
-      - sockets:/sockets
     ulimits:
       nofile:
         soft: 65535
