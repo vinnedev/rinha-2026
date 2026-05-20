@@ -29,7 +29,7 @@ var (
 	WARMUP_ITERS = parseInt("WARMUP_ITERS", 500)
 
 	STEADY_GC_OFF      = parseBool("STEADY_GC_OFF", true)
-	STEADY_GC_INTERVAL = parseDuration("STEADY_GC_INTERVAL", 5*time.Second)
+	STEADY_GC_INTERVAL = parseDuration("STEADY_GC_INTERVAL", 30*time.Second)
 
 	SHED_SLOTS = parseInt("SHED_SLOTS", 4)
 )

@@ -85,9 +85,10 @@ func main() {
 		)
 	}
 
-	// Steady-state GC: the hot path has no heap escapes. Auto-GC firing
-	// mid-request adds 50-500µs of STW to the tail. Disable it and run GC
-	// on a fixed ticker between requests. GOMEMLIMIT is still enforced.
+	// Steady-state GC: hot path is zero-alloc, but a long-running ticker
+	// keeps the heap bounded if anything leaks. 30s interval keeps STW
+	// events to ~4 over a 120s bench (vs 24 with a 5s tick) while still
+	// shedding sync.Pool stale entries.
 	if config.STEADY_GC_OFF {
 		debug.SetGCPercent(-1)
 		go steadyGCLoop(config.STEADY_GC_INTERVAL)

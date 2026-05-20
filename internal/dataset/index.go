@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"unsafe"
 
@@ -21,7 +22,13 @@ type Index struct {
 	Vectors    []int16
 	Labels     []byte
 	Thresholds []int64
-	raw        []byte
+	// SqrtThr[i] = sqrt(Thresholds[i]) precomputed at load time. The
+	// VP-Tree's triangle-inequality bound runs in sqrt space; precomputing
+	// here cuts one sqrtsd (~14 cycles on Haswell) per visited node.
+	// float32 keeps heap cost at 12MB (vs 24MB for float64) — max value is
+	// sqrt(5.6e9) ≈ 75k, well inside float32's 24-bit mantissa.
+	SqrtThr []float32
+	raw     []byte
 }
 
 func Load(path string) (*Index, error) {
@@ -76,8 +83,13 @@ func Load(path string) (*Index, error) {
 	labels := raw[lblOff : lblOff+n]
 	thresholds := unsafe.Slice((*int64)(unsafe.Pointer(&raw[thrOff])), n)
 
+	sqrtThr := make([]float32, n)
+	for i := 0; i < n; i++ {
+		sqrtThr[i] = float32(math.Sqrt(float64(thresholds[i])))
+	}
+
 	idx := &Index{
-		N: n, Vectors: vectors, Labels: labels, Thresholds: thresholds, raw: raw,
+		N: n, Vectors: vectors, Labels: labels, Thresholds: thresholds, SqrtThr: sqrtThr, raw: raw,
 	}
 	idx.preload()
 	return idx, nil
@@ -92,6 +104,7 @@ func (i *Index) Close() error {
 	i.Vectors = nil
 	i.Labels = nil
 	i.Thresholds = nil
+	i.SqrtThr = nil
 	return err
 }
 

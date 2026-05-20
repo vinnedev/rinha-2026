@@ -21,10 +21,11 @@ const (
 )
 
 type knn struct {
-	dists  [K]int64
-	labels [K]byte
-	worst  int
-	count  int
+	dists   [K]int64
+	labels  [K]byte
+	worst   int
+	count   int
+	sqrtRad float64 // sqrt(dists[worst]); valid once count == K
 }
 
 func (k *knn) consider(d int64, lbl byte) {
@@ -53,18 +54,11 @@ func (k *knn) recomputeWorst() {
 		}
 	}
 	k.worst = w
-}
-
-func (k *knn) radius() int64 {
-	if k.count < K {
-		return math.MaxInt64
-	}
-	return k.dists[k.worst]
+	k.sqrtRad = math.Sqrt(float64(k.dists[w]))
 }
 
 // earlyDone reports whether the K-best heap is already tight enough that we
-// can stop exploring the rest of the VP-Tree. We require the heap to be full
-// and the worst-of-best to sit inside the earlyExitRadiusSq sphere.
+// can stop exploring the rest of the VP-Tree.
 func (k *knn) earlyDone() bool {
 	return k.count == K && k.dists[k.worst] <= earlyExitRadiusSq
 }
@@ -78,10 +72,11 @@ func (k *knn) fraudCount() int {
 }
 
 type knnDistill struct {
-	dists  [KDistill]int64
-	labels [KDistill]byte
-	worst  int
-	count  int
+	dists   [KDistill]int64
+	labels  [KDistill]byte
+	worst   int
+	count   int
+	sqrtRad float64
 }
 
 func (k *knnDistill) consider(d int64, lbl byte) {
@@ -110,13 +105,7 @@ func (k *knnDistill) recomputeWorst() {
 		}
 	}
 	k.worst = w
-}
-
-func (k *knnDistill) radius() int64 {
-	if k.count < KDistill {
-		return math.MaxInt64
-	}
-	return k.dists[k.worst]
+	k.sqrtRad = math.Sqrt(float64(k.dists[w]))
 }
 
 // padQuery widens a 14-dim quantized query to a 16-int16 buffer with the
@@ -134,6 +123,11 @@ func KNNFraudCount(idx *dataset.Index, query [domain.Dim]int16) int {
 	return k.fraudCount()
 }
 
+// search walks the VP-Tree. The triangle-inequality bound for visiting the
+// not-yet-explored subtree runs in sqrt space: |sqrt(d) - sqrt(radiusSq)| ≤
+// sqrt(thr). idx.SqrtThr[lo] is precomputed at load time; k.sqrtRad is
+// refreshed only when recomputeWorst() fires. Once the K-best heap is full
+// we pay exactly one sqrtsd per visited node (for sqrt(d)) — down from three.
 func search(idx *dataset.Index, k *knn, lo, hi int, qp *[16]int16) {
 	if lo >= hi {
 		return
@@ -159,7 +153,8 @@ func search(idx *dataset.Index, k *knn, lo, hi int, qp *[16]int16) {
 		if k.earlyDone() {
 			return
 		}
-		if mayContain(d, thr, k.radius(), false) {
+		// outer subtree: visit if sqrt(d) + sqrt(radiusSq) >= sqrt(thr)
+		if k.count < K || math.Sqrt(float64(d))+k.sqrtRad >= float64(idx.SqrtThr[lo]) {
 			search(idx, k, splitMid, hi, qp)
 		}
 		return
@@ -168,7 +163,8 @@ func search(idx *dataset.Index, k *knn, lo, hi int, qp *[16]int16) {
 	if k.earlyDone() {
 		return
 	}
-	if mayContain(d, thr, k.radius(), true) {
+	// inner subtree: visit if sqrt(d) - sqrt(radiusSq) <= sqrt(thr)
+	if k.count < K || math.Sqrt(float64(d))-k.sqrtRad <= float64(idx.SqrtThr[lo]) {
 		search(idx, k, lo+1, splitMid, qp)
 	}
 }
@@ -213,29 +209,13 @@ func searchDistill(idx *dataset.Index, k *knnDistill, lo, hi int, qp *[16]int16)
 
 	if d < thr {
 		searchDistill(idx, k, lo+1, splitMid, qp)
-		if mayContain(d, thr, k.radius(), false) {
+		if k.count < KDistill || math.Sqrt(float64(d))+k.sqrtRad >= float64(idx.SqrtThr[lo]) {
 			searchDistill(idx, k, splitMid, hi, qp)
 		}
 		return
 	}
 	searchDistill(idx, k, splitMid, hi, qp)
-	if mayContain(d, thr, k.radius(), true) {
+	if k.count < KDistill || math.Sqrt(float64(d))-k.sqrtRad <= float64(idx.SqrtThr[lo]) {
 		searchDistill(idx, k, lo+1, splitMid, qp)
 	}
-}
-
-// mayContain reports whether the not-yet-visited subtree could still hold a
-// candidate within the current K-best radius. Works in squared-distance
-// space using the triangle inequality.
-func mayContain(d, thr, radiusSq int64, inner bool) bool {
-	if radiusSq == math.MaxInt64 {
-		return true
-	}
-	df := math.Sqrt(float64(d))
-	tf := math.Sqrt(float64(thr))
-	rf := math.Sqrt(float64(radiusSq))
-	if inner {
-		return df-rf <= tf
-	}
-	return df+rf >= tf
 }
