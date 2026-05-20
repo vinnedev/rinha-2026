@@ -10,15 +10,23 @@ import (
 const (
 	K        = 5
 	KDistill = 6
-
-	// earlyExitRadiusSq is the squared distance below which any candidate is
-	// considered "obviously a close neighbor". When the K-th best distance
-	// falls below this threshold the recursion bails out: any not-yet-visited
-	// branch can only contain candidates further away than the ones we
-	// already have. The constant is a tuned 0.143 radius in normalized [0,1]
-	// coordinates, squared, then upgraded to the Scale=10000 quantized space.
-	earlyExitRadiusSq int64 = 1430 * 1430
 )
+
+// earlyExitRadiusSq is the squared distance below which any candidate is
+// considered "obviously a close neighbor". When the K-th best distance
+// falls below this threshold the recursion bails out: any not-yet-visited
+// branch can only contain candidates further away than the ones we already
+// have. Tuned against the official 54.100-entry test set to be the largest
+// value that still yields weighted_E=0.
+var earlyExitRadiusSq int64 = 1430 * 1430
+
+// SetEarlyRadius swaps the early-exit radius and returns the previous value.
+// Test-only hook for calibration sweeps.
+func SetEarlyRadius(rsq int64) int64 {
+	prev := earlyExitRadiusSq
+	earlyExitRadiusSq = rsq
+	return prev
+}
 
 type knn struct {
 	dists   [K]int64

@@ -87,12 +87,12 @@ func main() {
 
 	// Steady-state GC: hot path is zero-alloc, but a long-running ticker
 	// keeps the heap bounded if anything leaks. 30s interval keeps STW
-	// events to ~4 over a 120s bench (vs 24 with a 5s tick) while still
-	// shedding sync.Pool stale entries.
+	// events to ~4 over a 120s bench while still shedding sync.Pool
+	// stale entries.
 	if config.STEADY_GC_OFF {
 		debug.SetGCPercent(-1)
-		go steadyGCLoop(config.STEADY_GC_INTERVAL)
-		log.Info("steady_gc_enabled", slog.Duration("interval", config.STEADY_GC_INTERVAL))
+		go steadyGCLoop(30 * time.Second)
+		log.Info("steady_gc_enabled")
 	}
 
 	srv := routes.NewRawServer(svc)
@@ -129,9 +129,6 @@ func main() {
 }
 
 func steadyGCLoop(interval time.Duration) {
-	if interval <= 0 {
-		return
-	}
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for range t.C {

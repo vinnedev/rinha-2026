@@ -5,7 +5,6 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -trimpath -pgo=cmd/api/default.pgo -ldflags="-s -w" -o /out/api ./cmd/api && \
-    go build -trimpath -ldflags="-s -w" -o /out/lb ./cmd/lb && \
     go build -trimpath -ldflags="-s -w" -o /out/preprocess ./cmd/preprocess
 
 FROM build AS prep
@@ -25,12 +24,10 @@ RUN mkdir -p /work && \
       exit 1; \
     fi
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM scratch
 COPY --from=build /out/api /api
-COPY --from=build /out/lb /lb
-COPY --from=prep --chown=nonroot:nonroot /work/vectors.bin /data/vectors.bin
-COPY --from=prep --chown=nonroot:nonroot /work/fraud_dt.bin /data/fraud_dt.bin
-USER nonroot:nonroot
+COPY --from=prep /work/vectors.bin /data/vectors.bin
+COPY --from=prep /work/fraud_dt.bin /data/fraud_dt.bin
 EXPOSE 8080
 ENV DATASET_PATH=/data/vectors.bin
 ENV TREE_PATH=/data/fraud_dt.bin

@@ -2,7 +2,6 @@ package config
 
 import (
 	"strconv"
-	"time"
 
 	"github.com/vinnedev/rinha-2026/pkg/dotenv"
 )
@@ -28,23 +27,10 @@ var (
 
 	WARMUP_ITERS = parseInt("WARMUP_ITERS", 500)
 
-	STEADY_GC_OFF      = parseBool("STEADY_GC_OFF", true)
-	STEADY_GC_INTERVAL = parseDuration("STEADY_GC_INTERVAL", 30*time.Second)
+	STEADY_GC_OFF = parseBool("STEADY_GC_OFF", true)
 
 	SHED_SLOTS = parseInt("SHED_SLOTS", 4)
 )
-
-func parseDuration(key string, fallback time.Duration) time.Duration {
-	v := dotenv.GetEnv(key, "")
-	if v == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return fallback
-	}
-	return d
-}
 
 func parseInt(key string, fallback int) int {
 	v := dotenv.GetEnv(key, "")
