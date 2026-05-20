@@ -83,6 +83,16 @@ var intPayloadPool = sync.Pool{
 	New: func() any { return new(fraud.IntPayload) },
 }
 
+// workSem bounds concurrent in-flight scoring. Unlike a default-shed it
+// blocks (never returns a wrong-answer fast response). The cap matches
+// the observed burst depth: when k6 (maxVUs=250) opens a connection per
+// VU and bursts simultaneously, we let up to 64 score concurrently and
+// queue the rest in the scheduler. With GOMAXPROCS=1 only one actually
+// runs at a time, but bounding the runnable set keeps scheduler overhead
+// linear and prevents the unbounded queue depth that caused v12's
+// k6-side timeout cascade (~20k missing detections).
+var workSem = make(chan struct{}, 64)
+
 type RawServer struct {
 	svc *fraud.Service
 }
@@ -246,15 +256,15 @@ func (s *RawServer) route(method, path, body []byte) []byte {
 }
 
 // scoreRawHTTP parses the request body and runs the hybrid classifier.
-// No load shedder: with GOMAXPROCS=1 the Go scheduler already serializes
-// goroutines; a non-blocking shed would only silently return a wrong
-// fraud_score=0 verdict (false negative) under bursts. Empirically — the
-// rinha bot post-2026-05-20 produces burst patterns that fired the old
-// SHED_SLOTS=4 default-shed in mass, flipping ~9k true frauds to legit.
+// workSem (64 slots) blocks the goroutine until a slot frees up — never
+// returns a wrong-answer fast response. Bounds concurrent scoring so the
+// scheduler runnable set stays small under k6's burst pattern.
 func (s *RawServer) scoreRawHTTP(body []byte) []byte {
 	if len(body) == 0 {
 		return rawApprovedZero
 	}
+	workSem <- struct{}{}
+	defer func() { <-workSem }()
 	p := intPayloadPool.Get().(*fraud.IntPayload)
 	if !fraud.ParseFast(body, p) {
 		intPayloadPool.Put(p)
