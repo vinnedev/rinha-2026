@@ -5,6 +5,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -trimpath -pgo=cmd/api/default.pgo -ldflags="-s -w" -o /out/api ./cmd/api && \
+    go build -trimpath -ldflags="-s -w" -o /out/lb ./cmd/lb && \
     go build -trimpath -ldflags="-s -w" -o /out/preprocess ./cmd/preprocess
 
 FROM build AS prep
@@ -26,6 +27,7 @@ RUN mkdir -p /work && \
 
 FROM scratch
 COPY --from=build /out/api /api
+COPY --from=build /out/lb /lb
 COPY --from=prep /work/vectors.bin /data/vectors.bin
 COPY --from=prep /work/fraud_dt.bin /data/fraud_dt.bin
 EXPOSE 8080
