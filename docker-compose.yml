@@ -10,14 +10,14 @@ x-api-env: &api-env
   HYBRID_HI: "0.8"
   STEADY_GC_OFF: "true"
   STEADY_GC_INTERVAL: 30s
-  SHED_SLOTS: "4"
+  
   WARMUP_ITERS: "500"
   GOMAXPROCS: "1"
   GOGC: "200"
   GOMEMLIMIT: "40MiB"
 
 x-api: &api-defaults
-  image: ghcr.io/vinnedev/rinha-2026-api:v8-knn-sqrt
+  image: ghcr.io/vinnedev/rinha-2026-api:v12-no-shed
   platform: linux/amd64
   networks:
     - rinha
@@ -56,7 +56,7 @@ services:
           memory: "165MB"
 
   lb:
-    image: ghcr.io/vinnedev/rinha-2026-api:v8-knn-sqrt
+    image: ghcr.io/vinnedev/rinha-2026-api:v12-no-shed
     platform: linux/amd64
     container_name: rinha-lb
     depends_on:
