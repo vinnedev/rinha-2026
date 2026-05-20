@@ -15,10 +15,9 @@ const (
 	// considered "obviously a close neighbor". When the K-th best distance
 	// falls below this threshold the recursion bails out: any not-yet-visited
 	// branch can only contain candidates further away than the ones we
-	// already have. The constant mirrors RINHA_EARLY_DISTANCE_MILLI=140 from
-	// the C top-1 implementation: 0.14 in normalized [0,1] coordinates,
-	// squared, then upgraded to the Scale=10000 quantized space.
-	earlyExitRadiusSq int64 = 1400 * 1400
+	// already have. The constant is a tuned 0.143 radius in normalized [0,1]
+	// coordinates, squared, then upgraded to the Scale=10000 quantized space.
+	earlyExitRadiusSq int64 = 1430 * 1430
 )
 
 type knn struct {

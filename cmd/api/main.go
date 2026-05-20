@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"log/slog"
 	"net"
 	"os"
@@ -10,7 +8,6 @@ import (
 	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
-	"sync"
 	"syscall"
 	"time"
 
@@ -31,58 +28,51 @@ func main() {
 		slog.Int("num_cpu", runtime.NumCPU()),
 	)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	// PGO profile collection — only fires when RINHA_PGO_PROFILE points at a
-	// writable file. Used once, off-line, to capture a CPU profile that the
-	// next build feeds back via `-pgo=auto` (Go 1.21+ auto-detects
-	// cmd/api/default.pgo). In production the env var is unset and this
-	// path is dead code that the inliner drops.
 	if pgoPath := os.Getenv("RINHA_PGO_PROFILE"); pgoPath != "" {
-		f, perr := os.Create(pgoPath)
-		if perr != nil {
-			log.Error("pgo_profile_create_failed", slog.String("path", pgoPath), slog.Any("error", perr))
-		} else {
-			if perr := pprof.StartCPUProfile(f); perr != nil {
-				log.Error("pgo_profile_start_failed", slog.Any("error", perr))
-				_ = f.Close()
-			} else {
+		if f, perr := os.Create(pgoPath); perr == nil {
+			if perr := pprof.StartCPUProfile(f); perr == nil {
 				log.Info("pgo_profile_started", slog.String("path", pgoPath))
 				defer func() {
 					pprof.StopCPUProfile()
 					_ = f.Close()
-					log.Info("pgo_profile_saved", slog.String("path", pgoPath))
 				}()
+			} else {
+				_ = f.Close()
 			}
 		}
 	}
 
-	tr, idx, err := loadResources(log)
+	tr, err := tree.Load(config.TREE_PATH)
 	if err != nil {
-		log.Error("resource_load_failed", slog.Any("error", err))
+		log.Error("tree_load_failed", slog.Any("error", err))
 		return
 	}
-	defer func() {
-		if tr != nil {
-			tr.Close()
-		}
-		if idx != nil {
-			idx.Close()
-		}
-	}()
+	defer tr.Close()
+	log.Info("tree_loaded",
+		slog.String("path", config.TREE_PATH),
+		slog.Int("nodes", tr.NodeCount()),
+		slog.Int("trees", tr.TreeCount()),
+	)
 
-	hybridIdx := idx
-	if !config.HYBRID_ENABLED {
-		hybridIdx = nil
+	var idx *dataset.Index
+	if config.HYBRID_ENABLED {
+		idx, err = dataset.Load(config.DATASET_PATH)
+		if err != nil {
+			log.Error("dataset_load_failed", slog.Any("error", err))
+			return
+		}
+		defer idx.Close()
+		log.Info("dataset_loaded",
+			slog.String("path", config.DATASET_PATH),
+			slog.Int("vectors", idx.N),
+		)
 	}
-	svc := fraud.NewService(tr, hybridIdx, config.HYBRID_LO, config.HYBRID_HI)
+
+	svc := fraud.NewService(tr, idx, config.HYBRID_LO, config.HYBRID_HI)
 	log.Info("classifier_ready",
-		slog.Bool("hybrid", hybridIdx != nil),
+		slog.Bool("hybrid", idx != nil),
 		slog.Float64("lo", config.HYBRID_LO),
 		slog.Float64("hi", config.HYBRID_HI),
-		slog.Int("tree_nodes", tr.NodeCount()),
-		slog.Int("tree_count", tr.TreeCount()),
 	)
 
 	if config.WARMUP_ITERS > 0 {
@@ -95,170 +85,55 @@ func main() {
 		)
 	}
 
-	// Steady-state GC mode: the hot path has no heap escapes (verified via
-	// `go build -gcflags=-m`); ScoreInt's IntPayload and the q [Dim]int16
-	// stack-allocate, and response bodies are package-level constants.
-	// With auto-GC active, a GC firing mid-request adds 50-500us of STW
-	// pause that lands directly in the p99 tail. Switching to a fixed
-	// 5s ticker keeps GC off the request path while still bounding heap
-	// growth (GOMEMLIMIT remains enforced; if anything leaks Go GCs anyway).
+	// Steady-state GC: the hot path has no heap escapes. Auto-GC firing
+	// mid-request adds 50-500µs of STW to the tail. Disable it and run GC
+	// on a fixed ticker between requests. GOMEMLIMIT is still enforced.
 	if config.STEADY_GC_OFF {
 		debug.SetGCPercent(-1)
-		go steadyGCLoop(ctx, log, config.STEADY_GC_INTERVAL)
+		go steadyGCLoop(config.STEADY_GC_INTERVAL)
 		log.Info("steady_gc_enabled", slog.Duration("interval", config.STEADY_GC_INTERVAL))
 	}
 
-	if config.USE_RAWHTTP {
-		rawSrv := routes.NewRawServer(svc)
-		var ln net.Listener
-		var err error
-		if config.SOCKET_PATH != "" {
-			ln, err = rawSrv.ServeUnix(config.SOCKET_PATH)
-		} else {
-			ln, err = rawSrv.ServeTCP(net.JoinHostPort(config.HOST, config.PORT))
-		}
-		if err != nil {
-			log.Error("rawhttp_listen_failed", slog.Any("error", err))
-			return
-		}
-		if config.CTRL_SOCKET_PATH != "" {
-			if ch, _, ferr := fdpass.Listen(config.CTRL_SOCKET_PATH); ferr != nil {
-				log.Warn("fdpass_listen_failed", slog.String("path", config.CTRL_SOCKET_PATH), slog.Any("error", ferr))
-			} else {
-				go rawSrv.ServeFDChannel(ch)
-				log.Info("fdpass_listening", slog.String("path", config.CTRL_SOCKET_PATH))
-			}
-		}
-		routes.RawMarkReady()
-		log.Info("rawhttp_server_starting", slog.String("addr", ln.Addr().String()))
-		<-ctx.Done()
-		log.Info("signal_received")
-		routes.RawMarkNotReady()
-		_ = ln.Close()
-		log.Info("shutdown_complete")
-		return
+	srv := routes.NewRawServer(svc)
+
+	var regularLn net.Listener
+	if config.SOCKET_PATH != "" {
+		regularLn, err = srv.ServeUnix(config.SOCKET_PATH)
+	} else {
+		regularLn, err = srv.ServeTCP(net.JoinHostPort(config.HOST, config.PORT))
 	}
-
-	srv := routes.NewServer(routes.New(svc))
-	addr := routes.ListenAddr()
-
-	regular, err := routes.NewListener(ctx, net.JoinHostPort(config.HOST, config.PORT))
 	if err != nil {
-		log.Error("listener_failed", slog.String("addr", addr), slog.Any("error", err))
+		log.Error("listen_failed", slog.Any("error", err))
 		return
 	}
 
-	var fdCh <-chan int
 	if config.CTRL_SOCKET_PATH != "" {
-		ch, _, ferr := fdpass.Listen(config.CTRL_SOCKET_PATH)
-		if ferr != nil {
-			log.Warn("fdpass_listen_failed", slog.String("path", config.CTRL_SOCKET_PATH), slog.Any("error", ferr))
-		} else {
-			fdCh = ch
+		if ch, _, ferr := fdpass.Listen(config.CTRL_SOCKET_PATH); ferr == nil {
+			go srv.ServeFDChannel(ch)
 			log.Info("fdpass_listening", slog.String("path", config.CTRL_SOCKET_PATH))
+		} else {
+			log.Warn("fdpass_listen_failed", slog.String("path", config.CTRL_SOCKET_PATH), slog.Any("error", ferr))
 		}
 	}
 
-	listener := net.Listener(regular)
-	if fdCh != nil {
-		listener = routes.NewCombinedListener(regular, fdCh)
-	}
+	routes.RawMarkReady()
+	log.Info("server_starting", slog.String("addr", regularLn.Addr().String()))
 
-	serverErr := make(chan error, 1)
-	go func() {
-		log.Info("server_starting", slog.String("addr", addr))
-		routes.MarkReady()
-		if err := srv.Serve(listener); err != nil {
-			serverErr <- err
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		log.Info("signal_received")
-	case err := <-serverErr:
-		if !errors.Is(err, net.ErrClosed) {
-			log.Error("server_failed", slog.Any("error", err))
-		}
-	}
-
-	routes.MarkNotReady()
-	if err := routes.Shutdown(srv, config.SHUTDOWN_TIMEOUT); err != nil {
-		log.Error("shutdown_failed", slog.Any("error", err))
-		return
-	}
-	log.Info("shutdown_complete")
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
+	log.Info("signal_received")
+	routes.RawMarkNotReady()
+	_ = regularLn.Close()
 }
 
-// steadyGCLoop runs runtime.GC() on a fixed ticker until ctx is cancelled.
-// Pairs with debug.SetGCPercent(-1) so the auto-GC scheduler doesn't fire
-// mid-request.
-func steadyGCLoop(ctx context.Context, log *slog.Logger, interval time.Duration) {
+func steadyGCLoop(interval time.Duration) {
 	if interval <= 0 {
 		return
 	}
 	t := time.NewTicker(interval)
 	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			start := time.Now()
-			runtime.GC()
-			if d := time.Since(start); d > 5*time.Millisecond {
-				log.Warn("steady_gc_slow", slog.Duration("elapsed", d))
-			}
-		}
+	for range t.C {
+		runtime.GC()
 	}
-}
-
-// loadResources loads the tree and (if hybrid is enabled) the VP-Tree dataset
-// concurrently — the dataset is the heavy one (~106MB mmap + page-cache warm),
-// so doing it in parallel with tree load + page-touch overlaps both.
-func loadResources(log *slog.Logger) (*tree.Tree, *dataset.Index, error) {
-	var (
-		wg     sync.WaitGroup
-		tr     *tree.Tree
-		idx    *dataset.Index
-		treeEr error
-		idxEr  error
-	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		start := time.Now()
-		tr, treeEr = tree.Load(config.TREE_PATH)
-		if treeEr == nil {
-			log.Info("tree_loaded",
-				slog.String("path", config.TREE_PATH),
-				slog.Int("nodes", tr.NodeCount()),
-				slog.Int("trees", tr.TreeCount()),
-				slog.Duration("elapsed", time.Since(start)),
-			)
-		}
-	}()
-	if config.HYBRID_ENABLED {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			start := time.Now()
-			idx, idxEr = dataset.Load(config.DATASET_PATH)
-			if idxEr == nil {
-				log.Info("dataset_loaded",
-					slog.String("path", config.DATASET_PATH),
-					slog.Int("vectors", idx.N),
-					slog.Duration("elapsed", time.Since(start)),
-				)
-			}
-		}()
-	}
-	wg.Wait()
-	if treeEr != nil {
-		return nil, nil, treeEr
-	}
-	if idxEr != nil {
-		return tr, nil, idxEr
-	}
-	return tr, idx, nil
 }

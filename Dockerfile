@@ -5,6 +5,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -trimpath -pgo=cmd/api/default.pgo -ldflags="-s -w" -o /out/api ./cmd/api && \
+    go build -trimpath -ldflags="-s -w" -o /out/lb ./cmd/lb && \
     go build -trimpath -ldflags="-s -w" -o /out/preprocess ./cmd/preprocess
 
 FROM build AS prep
@@ -26,6 +27,7 @@ RUN mkdir -p /work && \
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/api /api
+COPY --from=build /out/lb /lb
 COPY --from=prep --chown=nonroot:nonroot /work/vectors.bin /data/vectors.bin
 COPY --from=prep --chown=nonroot:nonroot /work/fraud_dt.bin /data/fraud_dt.bin
 USER nonroot:nonroot

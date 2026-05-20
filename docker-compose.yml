@@ -3,16 +3,15 @@ x-api-env: &api-env
   SERVICE_NAME: rinha-2026
   LOG_LEVEL: warn
   LOG_FORMAT: json
-  READ_TIMEOUT: 3s
-  WRITE_TIMEOUT: 3s
-  IDLE_TIMEOUT: 120s
-  SHUTDOWN_TIMEOUT: 20s
-  MAX_HEADER_BYTES: "8192"
   DATASET_PATH: /data/vectors.bin
   TREE_PATH: /data/fraud_dt.bin
   HYBRID_ENABLED: "true"
   HYBRID_LO: "0.2"
   HYBRID_HI: "0.8"
+  STEADY_GC_OFF: "true"
+  STEADY_GC_INTERVAL: 5s
+  SHED_SLOTS: "4"
+  WARMUP_ITERS: "500"
   GOMAXPROCS: "1"
   GOGC: "200"
   GOMEMLIMIT: "40MiB"
@@ -38,6 +37,7 @@ services:
     environment:
       <<: *api-env
       SOCKET_PATH: /sockets/api1.sock
+      CTRL_SOCKET_PATH: /sockets/api1.ctrl
     deploy:
       resources:
         limits:
@@ -51,6 +51,7 @@ services:
     environment:
       <<: *api-env
       SOCKET_PATH: /sockets/api2.sock
+      CTRL_SOCKET_PATH: /sockets/api2.ctrl
     deploy:
       resources:
         limits:
@@ -58,16 +59,19 @@ services:
           memory: "165MB"
 
   lb:
-    image: nginx:1.27-alpine
+    image: rinha-2026-api:latest
     platform: linux/amd64
     container_name: rinha-lb
     depends_on:
       - api1
       - api2
+    entrypoint: ["/lb"]
+    environment:
+      LB_ADDR: ":9999"
+      LB_UPSTREAMS: "/sockets/api1.ctrl,/sockets/api2.ctrl"
     ports:
       - "9999:9999"
     volumes:
-      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
       - sockets:/sockets
     ulimits:
       nofile:

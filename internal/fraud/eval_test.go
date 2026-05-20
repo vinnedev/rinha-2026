@@ -131,6 +131,9 @@ func TestEvalHybridFull(t *testing.T) {
 	t.Logf("  acc=%.4f  TP=%d TN=%d FP=%d FN=%d  failure_rate=%.4f  weighted_E=%d  lat=%.2fµs",
 		oracle.accuracy(n), oracle.TP, oracle.TN, oracle.FP, oracle.FN, oracle.failureRate(n), oracle.weightedE(),
 		float64(orLat.Microseconds())/float64(n))
+	if oracle.weightedE() != 0 {
+		t.Fatalf("oracle regression: FP=%d FN=%d weighted_E=%d", oracle.FP, oracle.FN, oracle.weightedE())
+	}
 	t.Logf("")
 	t.Logf("=== Hybrid (sweep confidence bands) ===")
 
@@ -157,5 +160,8 @@ func TestEvalHybridFull(t *testing.T) {
 		t.Logf("  band [%.2f,%.2f]: acc=%.4f  TP=%d TN=%d FP=%d FN=%d  weighted_E=%d  fallback=%.2f%%  approx_lat=%.2fµs",
 			b.lo, b.hi, hyb.accuracy(n), hyb.TP, hyb.TN, hyb.FP, hyb.FN, hyb.weightedE(),
 			100*float64(fallback)/float64(n), avgLat)
+		if b.lo == 0.20 && b.hi == 0.80 && hyb.weightedE() != 0 {
+			t.Fatalf("hybrid regression: band [%.2f,%.2f] FP=%d FN=%d weighted_E=%d", b.lo, b.hi, hyb.FP, hyb.FN, hyb.weightedE())
+		}
 	}
 }

@@ -89,7 +89,6 @@ def main() -> int:
 
     t0 = time.perf_counter()
     clf = joblib.load(args.model)
-    fraud_idx = list(clf.classes_).index(1)
     print(f"[load] {args.model} in {(time.perf_counter()-t0)*1000:.0f}ms")
 
     data = json.loads(args.test_data.read_text())
@@ -101,7 +100,11 @@ def main() -> int:
     print(f"[vec] vectorized in {time.perf_counter()-t0:.1f}s")
 
     t0 = time.perf_counter()
-    proba = clf.predict_proba(X)[:, fraud_idx]
+    if hasattr(clf, "predict_proba"):
+        fraud_idx = list(clf.classes_).index(1)
+        proba = clf.predict_proba(X)[:, fraud_idx]
+    else:
+        proba = clf.predict(X)
     elapsed_ms = (time.perf_counter() - t0) * 1000
     print(f"[predict] {len(entries):,} samples in {elapsed_ms:.0f}ms ({elapsed_ms*1000/len(entries):.1f}µs/sample)")
 

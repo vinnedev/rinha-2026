@@ -6,8 +6,8 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
-	"time"
 
+	"github.com/vinnedev/rinha-2026/config"
 	"github.com/vinnedev/rinha-2026/internal/fraud"
 )
 
@@ -16,10 +16,6 @@ const (
 	readBufSize    = 4 * 1024
 )
 
-// Pre-built full HTTP/1.1 responses (status line + headers + body) for the
-// six possible scoreRaw outcomes and the readiness / liveness probes. Each
-// entry is the exact byte sequence written to the client socket — no
-// formatting, no setters, one Write per request.
 var (
 	rawApprovedZero []byte
 	rawApprovedP2   []byte
@@ -35,13 +31,25 @@ var (
 	rawNotFound     = []byte("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
 )
 
+var (
+	bodyApprovedZero = []byte(`{"approved":true,"fraud_score":0}`)
+	bodyApprovedP2   = []byte(`{"approved":true,"fraud_score":0.2}`)
+	bodyApprovedP4   = []byte(`{"approved":true,"fraud_score":0.4}`)
+	bodyDeniedP6     = []byte(`{"approved":false,"fraud_score":0.6}`)
+	bodyDeniedP8     = []byte(`{"approved":false,"fraud_score":0.8}`)
+	bodyDeniedOne    = []byte(`{"approved":false,"fraud_score":1}`)
+)
+
 func init() {
-	rawApprovedZero = buildHTTP(respApprovedZero)
-	rawApprovedP2 = buildHTTP(respApprovedP2)
-	rawApprovedP4 = buildHTTP(respApprovedP4)
-	rawDeniedP6 = buildHTTP(respDeniedP6)
-	rawDeniedP8 = buildHTTP(respDeniedP8)
-	rawDeniedOne = buildHTTP(respDeniedOne)
+	rawApprovedZero = buildHTTP(bodyApprovedZero)
+	rawApprovedP2 = buildHTTP(bodyApprovedP2)
+	rawApprovedP4 = buildHTTP(bodyApprovedP4)
+	rawDeniedP6 = buildHTTP(bodyDeniedP6)
+	rawDeniedP8 = buildHTTP(bodyDeniedP8)
+	rawDeniedOne = buildHTTP(bodyDeniedOne)
+	if config.SHED_SLOTS > 0 {
+		shedSem = make(chan struct{}, config.SHED_SLOTS)
+	}
 }
 
 func buildHTTP(body []byte) []byte {
@@ -75,9 +83,18 @@ var rawReadBufPool = sync.Pool{
 	},
 }
 
+var intPayloadPool = sync.Pool{
+	New: func() any { return new(fraud.IntPayload) },
+}
+
+// shedSem caps in-flight scoring. With GOMAXPROCS=1 the Go scheduler already
+// serializes execution; the semaphore exists to short-circuit pile-ups when
+// a GC tick or page fault stalls the runnable goroutine. The select is
+// non-blocking (default branch) — no timer, no alloc on shed.
+var shedSem chan struct{}
+
 type RawServer struct {
 	svc *fraud.Service
-	ln  net.Listener
 }
 
 func NewRawServer(svc *fraud.Service) *RawServer {
@@ -92,24 +109,8 @@ func (s *RawServer) ServeUnix(path string) (net.Listener, error) {
 		return nil, err
 	}
 	_ = os.Chmod(path, 0o666)
-	s.ln = ln
 	go s.acceptLoop(ln)
 	return ln, nil
-}
-
-// ServeFDChannel adopts fds received over an SCM_RIGHTS control channel
-// and runs handleConn on each. fdCh is owned by the fdpass receiver and
-// closed on shutdown.
-func (s *RawServer) ServeFDChannel(fdCh <-chan int) {
-	for fd := range fdCh {
-		f := os.NewFile(uintptr(fd), "scm-fd")
-		c, err := net.FileConn(f)
-		_ = f.Close()
-		if err != nil {
-			continue
-		}
-		go s.handleConn(c)
-	}
 }
 
 func (s *RawServer) ServeTCP(addr string) (net.Listener, error) {
@@ -118,7 +119,6 @@ func (s *RawServer) ServeTCP(addr string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.ln = ln
 	go s.acceptLoop(ln)
 	return ln, nil
 }
@@ -128,6 +128,22 @@ func (s *RawServer) acceptLoop(ln net.Listener) {
 		c, err := ln.Accept()
 		if err != nil {
 			return
+		}
+		go s.handleConn(c)
+	}
+}
+
+// ServeFDChannel adopts fds received over an SCM_RIGHTS control channel and
+// hands each off to handleConn in its own goroutine — one per persistent
+// keep-alive conn, exactly like the local accept loop. fdCh is owned by the
+// fdpass receiver; the loop returns when the channel closes.
+func (s *RawServer) ServeFDChannel(fdCh <-chan int) {
+	for fd := range fdCh {
+		f := os.NewFile(uintptr(fd), "scm-fd")
+		c, err := net.FileConn(f)
+		_ = f.Close()
+		if err != nil {
+			continue
 		}
 		go s.handleConn(c)
 	}
@@ -248,14 +264,7 @@ func (s *RawServer) scoreRawHTTP(body []byte) []byte {
 		case shedSem <- struct{}{}:
 			defer func() { <-shedSem }()
 		default:
-			timer := time.NewTimer(shedTimeout)
-			select {
-			case shedSem <- struct{}{}:
-				timer.Stop()
-				defer func() { <-shedSem }()
-			case <-timer.C:
-				return rawApprovedZero
-			}
+			return rawApprovedZero
 		}
 	}
 	p := intPayloadPool.Get().(*fraud.IntPayload)
@@ -287,9 +296,6 @@ func pickRawResponse(score float64) []byte {
 
 var rawReady atomic.Bool
 
-// RawMarkReady flips the readiness flag for the raw server. Mirrors the
-// fasthttp-side MarkReady so both servers share readiness semantics when
-// running in raw mode.
 func RawMarkReady()    { rawReady.Store(true) }
 func RawMarkNotReady() { rawReady.Store(false) }
 

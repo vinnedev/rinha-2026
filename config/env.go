@@ -16,14 +16,6 @@ var (
 	LOG_LEVEL  = dotenv.GetEnv("LOG_LEVEL", "info")
 	LOG_FORMAT = dotenv.GetEnv("LOG_FORMAT", "json")
 
-	READ_TIMEOUT     = parseDuration("READ_TIMEOUT", 5*time.Second)
-	WRITE_TIMEOUT    = parseDuration("WRITE_TIMEOUT", 10*time.Second)
-	IDLE_TIMEOUT     = parseDuration("IDLE_TIMEOUT", 120*time.Second)
-	SHUTDOWN_TIMEOUT = parseDuration("SHUTDOWN_TIMEOUT", 30*time.Second)
-	TCP_KEEPALIVE    = parseDuration("TCP_KEEPALIVE", 3*time.Minute)
-
-	MAX_HEADER_BYTES = parseInt("MAX_HEADER_BYTES", 1<<20)
-
 	DATASET_PATH = dotenv.GetEnv("DATASET_PATH", "/data/vectors.bin")
 	TREE_PATH    = dotenv.GetEnv("TREE_PATH", "/data/fraud_dt.bin")
 
@@ -36,13 +28,10 @@ var (
 
 	WARMUP_ITERS = parseInt("WARMUP_ITERS", 500)
 
-	STEADY_GC_OFF      = parseBool("STEADY_GC_OFF", false)
+	STEADY_GC_OFF      = parseBool("STEADY_GC_OFF", true)
 	STEADY_GC_INTERVAL = parseDuration("STEADY_GC_INTERVAL", 5*time.Second)
 
-	SHED_SLOTS   = parseInt("SHED_SLOTS", 0)
-	SHED_TIMEOUT = parseDuration("SHED_TIMEOUT", 3*time.Millisecond)
-
-	USE_RAWHTTP = parseBool("USE_RAWHTTP", false)
+	SHED_SLOTS = parseInt("SHED_SLOTS", 4)
 )
 
 func parseDuration(key string, fallback time.Duration) time.Duration {
