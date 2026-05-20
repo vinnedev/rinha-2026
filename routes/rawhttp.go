@@ -7,7 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/vinnedev/rinha-2026/config"
 	"github.com/vinnedev/rinha-2026/internal/fraud"
 )
 
@@ -47,9 +46,6 @@ func init() {
 	rawDeniedP6 = buildHTTP(bodyDeniedP6)
 	rawDeniedP8 = buildHTTP(bodyDeniedP8)
 	rawDeniedOne = buildHTTP(bodyDeniedOne)
-	if config.SHED_SLOTS > 0 {
-		shedSem = make(chan struct{}, config.SHED_SLOTS)
-	}
 }
 
 func buildHTTP(body []byte) []byte {
@@ -86,12 +82,6 @@ var rawReadBufPool = sync.Pool{
 var intPayloadPool = sync.Pool{
 	New: func() any { return new(fraud.IntPayload) },
 }
-
-// shedSem caps in-flight scoring. With GOMAXPROCS=1 the Go scheduler already
-// serializes execution; the semaphore exists to short-circuit pile-ups when
-// a GC tick or page fault stalls the runnable goroutine. The select is
-// non-blocking (default branch) — no timer, no alloc on shed.
-var shedSem chan struct{}
 
 type RawServer struct {
 	svc *fraud.Service
@@ -255,17 +245,15 @@ func (s *RawServer) route(method, path, body []byte) []byte {
 	return rawNotFound
 }
 
+// scoreRawHTTP parses the request body and runs the hybrid classifier.
+// No load shedder: with GOMAXPROCS=1 the Go scheduler already serializes
+// goroutines; a non-blocking shed would only silently return a wrong
+// fraud_score=0 verdict (false negative) under bursts. Empirically — the
+// rinha bot post-2026-05-20 produces burst patterns that fired the old
+// SHED_SLOTS=4 default-shed in mass, flipping ~9k true frauds to legit.
 func (s *RawServer) scoreRawHTTP(body []byte) []byte {
 	if len(body) == 0 {
 		return rawApprovedZero
-	}
-	if shedSem != nil {
-		select {
-		case shedSem <- struct{}{}:
-			defer func() { <-shedSem }()
-		default:
-			return rawApprovedZero
-		}
 	}
 	p := intPayloadPool.Get().(*fraud.IntPayload)
 	if !fraud.ParseFast(body, p) {

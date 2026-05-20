@@ -28,8 +28,6 @@ var (
 	WARMUP_ITERS = parseInt("WARMUP_ITERS", 500)
 
 	STEADY_GC_OFF = parseBool("STEADY_GC_OFF", true)
-
-	SHED_SLOTS = parseInt("SHED_SLOTS", 4)
 )
 
 func parseInt(key string, fallback int) int {

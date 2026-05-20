@@ -9,7 +9,6 @@ x-api-env: &api-env
   HYBRID_LO: "0.2"
   HYBRID_HI: "0.8"
   STEADY_GC_OFF: "true"
-  SHED_SLOTS: "4"
   WARMUP_ITERS: "500"
   GOMAXPROCS: "1"
   GOGC: "200"
