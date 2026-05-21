@@ -83,15 +83,14 @@ var intPayloadPool = sync.Pool{
 	New: func() any { return new(fraud.IntPayload) },
 }
 
-// workSem bounds concurrent in-flight scoring. Unlike a default-shed it
-// blocks (never returns a wrong-answer fast response). The cap matches
-// the observed burst depth: when k6 (maxVUs=250) opens a connection per
-// VU and bursts simultaneously, we let up to 64 score concurrently and
-// queue the rest in the scheduler. With GOMAXPROCS=1 only one actually
-// runs at a time, but bounding the runnable set keeps scheduler overhead
-// linear and prevents the unbounded queue depth that caused v12's
-// k6-side timeout cascade (~20k missing detections).
-var workSem = make(chan struct{}, 64)
+// workSem bounds concurrent in-flight FULL HYBRID scoring (DT + KNN).
+// Requests that can't acquire a slot don't block — they fall through to
+// ScoreIntFast (DT-only). The DT path costs ~1.5µs and is 97.68%
+// accurate, so the shed-fallback gives mostly-correct answers under
+// burst instead of either (a) silently returning approved=true [v8/v9],
+// (b) blocking k6 VUs until iteration skip [v12], or (c) waiting in a
+// runnable queue that explodes p99 [v13].
+var workSem = make(chan struct{}, 32)
 
 type RawServer struct {
 	svc *fraud.Service
@@ -255,24 +254,34 @@ func (s *RawServer) route(method, path, body []byte) []byte {
 	return rawNotFound
 }
 
-// scoreRawHTTP parses the request body and runs the hybrid classifier.
-// workSem (64 slots) blocks the goroutine until a slot frees up — never
-// returns a wrong-answer fast response. Bounds concurrent scoring so the
-// scheduler runnable set stays small under k6's burst pattern.
+// scoreRawHTTP parses the request body and routes to the full hybrid
+// classifier or, on shed, the DT-only fast path.
 func (s *RawServer) scoreRawHTTP(body []byte) []byte {
 	if len(body) == 0 {
 		return rawApprovedZero
 	}
-	workSem <- struct{}{}
-	defer func() { <-workSem }()
 	p := intPayloadPool.Get().(*fraud.IntPayload)
 	if !fraud.ParseFast(body, p) {
 		intPayloadPool.Put(p)
 		return rawApprovedZero
 	}
-	resp := s.svc.ScoreInt(p)
+	var resp = fraudResponseFor(s, p)
 	intPayloadPool.Put(p)
-	return pickRawResponse(resp.FraudScore)
+	return pickRawResponse(resp)
+}
+
+// fraudResponseFor tries to acquire a workSem slot for the full hybrid
+// scoring; on shed it falls back to DT-only. The select-default keeps the
+// shed path lock-free and allocation-free.
+func fraudResponseFor(s *RawServer, p *fraud.IntPayload) float64 {
+	select {
+	case workSem <- struct{}{}:
+		resp := s.svc.ScoreInt(p)
+		<-workSem
+		return resp.FraudScore
+	default:
+		return s.svc.ScoreIntFast(p).FraudScore
+	}
 }
 
 func pickRawResponse(score float64) []byte {

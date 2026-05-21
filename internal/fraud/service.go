@@ -36,6 +36,26 @@ func (s *Service) ScoreInt(p *IntPayload) domain.FraudResponse {
 	return s.scoreFromVector(q)
 }
 
+// ScoreIntFast skips the KNN oracle entirely and returns the DT/RF verdict.
+// 97.68% accurate on the official 54.100-entry eval set (FP=44, FN=1213,
+// weighted_E=3683). Used as the shed-fallback under burst: bounds p99 by
+// avoiding the KNN tail while keeping the answer ~mostly correct instead
+// of the wrong-answer-always shed of v8/v9 era.
+func (s *Service) ScoreIntFast(p *IntPayload) domain.FraudResponse {
+	var q [domain.Dim]int16
+	VectorizeInt(p, q[:])
+	var fq [domain.Dim]float32
+	scale := float32(domain.Scale)
+	for i := 0; i < domain.Dim; i++ {
+		fq[i] = float32(q[i]) / scale
+	}
+	dtScore := float64(s.tree.Predict(fq))
+	return domain.FraudResponse{
+		Approved:   dtScore < domain.FraudThreshold,
+		FraudScore: dtScore,
+	}
+}
+
 func (s *Service) scoreFromVector(q [domain.Dim]int16) domain.FraudResponse {
 	var fq [domain.Dim]float32
 	scale := float32(domain.Scale)
